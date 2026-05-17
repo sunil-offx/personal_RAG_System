@@ -5,4 +5,4 @@ scikit-learn>=1.4.0
 PyPDF2>=3.0.0
 python-dotenv>=1.0.0
 streamlit>=1.35.0
-psycopg2-binary>=2.9.9
+firebase-admin>=7.4.0

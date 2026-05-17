@@ -1,13 +1,15 @@
 import hashlib
 import os
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
 
-import psycopg2
-import psycopg2.extras
 import subprocess
 from datetime import datetime, timedelta
+
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 import streamlit as st
 import importlib
@@ -24,176 +26,119 @@ from rag_study_assistant import (
     answer_question,
 )
 
-# ── Cloud DB connection ────────────────────────────────────────────────────────
-DATABASE_URL = os.environ.get("DATABASE_URL") or (
-    st.secrets.get("DATABASE_URL") if hasattr(st, "secrets") else None
-)
-
-def get_conn():
-    """Return a new psycopg2 connection to Supabase PostgreSQL."""
-    if not DATABASE_URL:
-        raise RuntimeError(
-            "DATABASE_URL is not set. Add it to your .env file or Streamlit secrets."
-        )
-    return psycopg2.connect(DATABASE_URL, sslmode="require")
+# ── Firebase / Firestore setup ─────────────────────────────────────────────────
+@st.cache_resource
+def get_db():
+    """Initialize Firebase app and return Firestore client (cached per session)."""
+    if not firebase_admin._apps:
+        # Try loading key from Streamlit secrets first, then from local file
+        if hasattr(st, "secrets") and "FIREBASE_KEY" in st.secrets:
+            key_dict = json.loads(st.secrets["FIREBASE_KEY"])
+            cred = credentials.Certificate(key_dict)
+        else:
+            key_path = os.environ.get("FIREBASE_KEY_PATH", "firebase_key.json")
+            cred = credentials.Certificate(key_path)
+        firebase_admin.initialize_app(cred)
+    return firestore.client()
 
 
 def init_storage():
-    """Ensure study folder exists and cloud DB tables are created."""
+    """Ensure study folder exists. Firestore creates collections automatically."""
     STUDY_DIR.mkdir(exist_ok=True)
-    conn = get_conn()
-    cur = conn.cursor()
-    # Uploaded files table
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS uploads (
-            id SERIAL PRIMARY KEY,
-            filename TEXT NOT NULL,
-            original_name TEXT NOT NULL,
-            size_bytes INTEGER NOT NULL,
-            uploaded_at TEXT NOT NULL
-        );
-        """
-    )
-    # Q&A history table
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS history (
-            id SERIAL PRIMARY KEY,
-            username TEXT NOT NULL,
-            question TEXT NOT NULL,
-            answer TEXT NOT NULL,
-            pinned INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL
-        );
-        """
-    )
-    # Users table for auth
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-        """
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
+    # No table creation needed — Firestore is schema-less
+
 
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
+
 
 def authenticate_user(email, password):
     if email == "admin" and password == "myadminsecret":
         return True, "admin"
 
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT password_hash FROM users WHERE email = %s", (email,))
-    row = cur.fetchone()
-    cur.close()
-    conn.close()
-    if row and row[0] == hash_password(password):
-        return True, email
+    db = get_db()
+    docs = db.collection("users").where("email", "==", email).limit(1).stream()
+    for doc in docs:
+        data = doc.to_dict()
+        if data.get("password_hash") == hash_password(password):
+            return True, email
     return False, None
 
+
 def create_user(email, password):
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO users (email, password_hash, created_at) VALUES (%s, %s, %s)",
-            (email, hash_password(password), datetime.utcnow().isoformat())
-        )
-        conn.commit()
-        cur.close()
-        return True
-    except psycopg2.errors.UniqueViolation:
-        conn.rollback()
-        return False
-    finally:
-        conn.close()
+    db = get_db()
+    # Check if user already exists
+    existing = db.collection("users").where("email", "==", email).limit(1).stream()
+    for _ in existing:
+        return False  # Already exists
+    db.collection("users").add({
+        "email": email,
+        "password_hash": hash_password(password),
+        "created_at": datetime.utcnow().isoformat(),
+    })
+    return True
 
 
 def record_upload(filename: str, original_name: str, size_bytes: int):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO uploads (filename, original_name, size_bytes, uploaded_at) VALUES (%s, %s, %s, %s)",
-        (filename, original_name, size_bytes, datetime.utcnow().isoformat()),
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
+    db = get_db()
+    db.collection("uploads").add({
+        "filename": filename,
+        "original_name": original_name,
+        "size_bytes": size_bytes,
+        "uploaded_at": datetime.utcnow().isoformat(),
+    })
 
 
 def load_uploads():
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT filename, original_name, size_bytes, uploaded_at FROM uploads ORDER BY uploaded_at DESC"
-    )
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return rows
+    db = get_db()
+    docs = db.collection("uploads").order_by(
+        "uploaded_at", direction=firestore.Query.DESCENDING
+    ).stream()
+    return [
+        (d.to_dict()["filename"], d.to_dict()["original_name"],
+         d.to_dict()["size_bytes"], d.to_dict()["uploaded_at"])
+        for d in docs
+    ]
 
 
 def save_history(username: str, question: str, answer: str):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO history (username, question, answer, pinned, created_at)
-        VALUES (%s, %s, %s, %s, %s)
-        """,
-        (username, question, answer, 0, datetime.utcnow().isoformat()),
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
+    db = get_db()
+    db.collection("history").add({
+        "username": username,
+        "question": question,
+        "answer": answer,
+        "pinned": 0,
+        "created_at": datetime.utcnow().isoformat(),
+    })
 
 
 def load_history(username: str):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT id, question, answer, pinned, created_at
-        FROM history
-        WHERE username = %s
-        ORDER BY pinned DESC, created_at DESC
-        """,
-        (username,),
-    )
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
+    db = get_db()
+    docs = db.collection("history").where("username", "==", username).stream()
+    rows = []
+    for d in docs:
+        data = d.to_dict()
+        rows.append((d.id, data["question"], data["answer"],
+                     data.get("pinned", 0), data["created_at"]))
+    # Sort: pinned first, then newest
+    rows.sort(key=lambda r: (-r[3], r[4]), reverse=False)
+    rows.sort(key=lambda r: (-r[3], r[4]))
     return rows
 
 
 def clear_history(username: str):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM history WHERE username = %s", (username,))
-    conn.commit()
-    cur.close()
-    conn.close()
+    db = get_db()
+    docs = db.collection("history").where("username", "==", username).stream()
+    for d in docs:
+        d.reference.delete()
 
 
-def set_pin(history_id: int, pinned: bool):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        "UPDATE history SET pinned = %s WHERE id = %s",
-        (1 if pinned else 0, history_id),
+def set_pin(history_id: str, pinned: bool):
+    db = get_db()
+    db.collection("history").document(history_id).update(
+        {"pinned": 1 if pinned else 0}
     )
-    conn.commit()
-    cur.close()
-    conn.close()
+
 
 
 def ensure_user_signed_in():
