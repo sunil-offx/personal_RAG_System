@@ -142,10 +142,9 @@ def set_pin(history_id: str, pinned: bool):
 
 
 def ensure_user_signed_in():
-    """Show a centered, premium sign-in gate and remember session for 48h."""
+    """Centered login gate — Sign Up default, Sign In & Admin as links below."""
     now = datetime.utcnow()
     expires = st.session_state.get("signed_in_expires")
-
     if isinstance(expires, str):
         try:
             expires = datetime.fromisoformat(expires)
@@ -156,41 +155,26 @@ def ensure_user_signed_in():
     if username and expires and expires > now:
         return
 
-    # ── Ice Blue + Light Gray theme CSS ──────────────────────────────────────
+    # Default mode = Sign Up
+    if "login_mode" not in st.session_state:
+        st.session_state["login_mode"] = "signup"
+    mode = st.session_state["login_mode"]
+
+    # ── CSS ───────────────────────────────────────────────────────────────────
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
-    /* Full page background */
     .stApp {
-        background: linear-gradient(135deg, #e8f4fd 0%, #f0f7ff 40%, #e8f0fe 100%);
+        background: linear-gradient(135deg, #e8f4fd 0%, #f0f7ff 50%, #e8f0fe 100%);
         min-height: 100vh;
     }
-    [data-testid="stHeader"] { background: transparent; }
-    [data-testid="stToolbar"] { display: none; }
+    [data-testid="stHeader"], [data-testid="stToolbar"] { display: none; }
 
-    /* Radio buttons */
-    div[role="radiogroup"] label {
-        background: #ffffff;
-        border: 1.5px solid #bae6fd;
-        border-radius: 30px;
-        padding: 6px 18px;
-        margin: 3px;
-        color: #0ea5e9 !important;
-        font-weight: 500;
-        transition: all 0.2s;
-    }
-    div[role="radiogroup"] label:has(input:checked) {
-        background: #0ea5e9;
-        color: #ffffff !important;
-        border-color: #0ea5e9;
-    }
-
-    /* Input fields */
+    /* Inputs */
     .stTextInput > div > div > input {
-        background: #f8fbff;
+        background: #ffffff;
         border: 1.5px solid #bae6fd;
         border-radius: 10px;
         color: #1e3a5f;
@@ -200,113 +184,178 @@ def ensure_user_signed_in():
     .stTextInput > div > div > input:focus {
         border-color: #0ea5e9;
         box-shadow: 0 0 0 3px rgba(14,165,233,0.15);
+        outline: none;
     }
 
     /* Primary button */
     .stButton > button[kind="primary"] {
-        background: linear-gradient(90deg, #0ea5e9, #38bdf8);
-        color: white;
-        border: none;
-        border-radius: 12px;
-        padding: 12px 0;
-        font-size: 1rem;
-        font-weight: 600;
-        letter-spacing: 0.3px;
+        background: linear-gradient(90deg, #0ea5e9, #38bdf8) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 12px !important;
+        font-size: 1rem !important;
+        font-weight: 600 !important;
+        box-shadow: 0 4px 18px rgba(14,165,233,0.35);
         transition: all 0.2s;
-        box-shadow: 0 4px 20px rgba(14,165,233,0.35);
     }
     .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(90deg, #0284c7, #0ea5e9);
-        box-shadow: 0 6px 28px rgba(14,165,233,0.5);
+        background: linear-gradient(90deg, #0284c7, #0ea5e9) !important;
+        box-shadow: 0 6px 24px rgba(14,165,233,0.5);
         transform: translateY(-1px);
     }
-    </style>
 
-    <div style="text-align:center; padding: 3rem 0 1.5rem 0;">
-      <div style="font-size:3.5rem; margin-bottom:0.5rem;">📚</div>
-      <div style="font-size:2rem; font-weight:700; color:#0ea5e9; letter-spacing:-0.5px;">Study Assistant</div>
-      <div style="font-size:0.95rem; color:#64748b; margin-top:0.3rem;">Your AI-powered RAG learning companion</div>
+    /* Link-style small buttons */
+    .stButton > button[kind="secondary"] {
+        background: transparent !important;
+        border: none !important;
+        color: #0ea5e9 !important;
+        font-size: 0.88rem !important;
+        padding: 2px 8px !important;
+        text-decoration: underline !important;
+        box-shadow: none !important;
+        min-height: unset !important;
+    }
+    .stButton > button[kind="secondary"]:hover {
+        color: #0284c7 !important;
+        background: transparent !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ── Centered header (logo + title + subtitle) ─────────────────────────────
+    st.markdown("""
+    <div style="text-align:center; padding: 3.5rem 0 2rem 0;">
+      <div style="font-size:3.8rem; margin-bottom:0.6rem;">📚</div>
+      <div style="font-size:2.1rem; font-weight:700; color:#0ea5e9; letter-spacing:-0.5px; line-height:1.2;">
+        Study Material Assistant
+      </div>
+      <div style="font-size:0.97rem; color:#64748b; margin-top:0.4rem;">
+        Your AI-powered RAG learning companion
+      </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Center the form using columns
+    # ── Centered form ─────────────────────────────────────────────────────────
     _, col, _ = st.columns([1, 2, 1])
     with col:
-        choice = st.radio(
-            "Mode",
-            ["Sign In", "Sign Up", "Admin"],
-            horizontal=True,
-            label_visibility="collapsed",
+
+        # Mode heading
+        mode_labels = {
+            "signup": "✨ Create your account",
+            "signin": "👋 Welcome back",
+            "admin":  "🔐 Admin Login",
+        }
+        st.markdown(
+            f"<h4 style='text-align:center; color:#0369a1; margin-bottom:1rem;'>"
+            f"{mode_labels[mode]}</h4>",
+            unsafe_allow_html=True,
         )
 
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        if choice == "Admin":
-            st.markdown("🔐 **Admin Login**")
-            email_input = "admin"
-            password_input = st.text_input(
+        # Form fields
+        if mode == "admin":
+            email_val = "admin"
+            pwd_input = st.text_input(
                 "Admin Password", type="password",
                 placeholder="Enter admin password",
-                key="auth_pass_input_admin"
+                key="f_admin_pwd",
             )
+            email_input = email_val
+            password_input = pwd_input
         else:
             email_input = st.text_input(
                 "📧 Email", placeholder="you@example.com",
-                key="auth_email_input"
+                key="f_email",
             )
             password_input = st.text_input(
                 "🔒 Password", type="password",
-                placeholder="Your password",
-                key="auth_pass_input"
+                placeholder="Create a password" if mode == "signup" else "Your password",
+                key="f_pwd",
             )
 
-        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-        if st.button(
-            "→ Continue" if choice == "Sign In" or choice == "Admin"
-            else "→ Create Account",
-            use_container_width=True,
-            type="primary",
-        ):
+        # ── Centered mode-switch links below password ─────────────────────────
+        link_cols = st.columns([1, 1, 1, 1, 1])
+        if mode == "signup":
+            with link_cols[1]:
+                if st.button("Sign In", key="lnk_signin", type="secondary"):
+                    st.session_state["login_mode"] = "signin"
+                    st.rerun()
+            with link_cols[3]:
+                if st.button("Admin", key="lnk_admin", type="secondary"):
+                    st.session_state["login_mode"] = "admin"
+                    st.rerun()
+        elif mode == "signin":
+            with link_cols[1]:
+                if st.button("Sign Up", key="lnk_signup", type="secondary"):
+                    st.session_state["login_mode"] = "signup"
+                    st.rerun()
+            with link_cols[3]:
+                if st.button("Admin", key="lnk_admin2", type="secondary"):
+                    st.session_state["login_mode"] = "admin"
+                    st.rerun()
+        else:  # admin
+            with link_cols[2]:
+                if st.button("← Back to Sign In", key="lnk_back", type="secondary"):
+                    st.session_state["login_mode"] = "signin"
+                    st.rerun()
+
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+        # ── Main action button ────────────────────────────────────────────────
+        btn_label = {
+            "signup": "→ Create Account",
+            "signin": "→ Sign In",
+            "admin":  "→ Admin Login",
+        }[mode]
+
+        if st.button(btn_label, use_container_width=True, type="primary", key="auth_btn"):
             email = email_input.strip()
             pwd = password_input.strip()
 
-            if choice == "Admin":
+            if mode == "admin":
                 if pwd == os.environ.get("ADMIN_PASSWORD", "Admin@Study2025"):
-                    st.session_state["username"] = "admin"
-                    st.session_state["is_admin"] = True
-                    st.session_state["signed_in_expires"] = now + timedelta(hours=48)
+                    st.session_state.update({
+                        "username": "admin",
+                        "is_admin": True,
+                        "signed_in_expires": now + timedelta(hours=48),
+                    })
                     st.success("✅ Signed in as Admin!")
                     st.rerun()
                 else:
                     st.error("❌ Invalid admin password.")
-            else:
+
+            elif mode == "signup":
                 if not email or not pwd:
                     st.warning("⚠️ Please fill in both fields.")
-                elif choice == "Sign Up":
-                    if create_user(email, pwd):
-                        st.success("✅ Account created! Switch to Sign In to continue.")
-                    else:
-                        st.error("❌ An account with this email already exists.")
-                elif choice == "Sign In":
+                elif create_user(email, pwd):
+                    st.success("✅ Account created! Click **Sign In** below to log in.")
+                else:
+                    st.error("❌ An account with this email already exists.")
+
+            elif mode == "signin":
+                if not email or not pwd:
+                    st.warning("⚠️ Please fill in both fields.")
+                else:
                     ok, user_email = authenticate_user(email, pwd)
                     if ok:
-                        st.session_state["username"] = user_email
-                        st.session_state["is_admin"] = (user_email == "admin")
-                        st.session_state["signed_in_expires"] = now + timedelta(hours=48)
+                        st.session_state.update({
+                            "username": user_email,
+                            "is_admin": (user_email == "admin"),
+                            "signed_in_expires": now + timedelta(hours=48),
+                        })
                         st.success(f"✅ Welcome back, `{user_email}`!")
                         st.rerun()
                     else:
                         st.error("❌ Invalid email or password.")
 
         st.markdown(
-            "<p style='text-align:center; color:#94a3b8; font-size:0.8rem; margin-top:1.2rem;'>"
+            "<p style='text-align:center; color:#94a3b8; font-size:0.78rem; margin-top:1.2rem;'>"
             "🔒 Your data is stored securely in the cloud</p>",
             unsafe_allow_html=True,
         )
 
     st.stop()
-
 
 
 def ensure_env():
