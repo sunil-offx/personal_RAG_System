@@ -160,7 +160,7 @@ def ensure_user_signed_in():
         st.session_state["login_mode"] = "signup"
     mode = st.session_state["login_mode"]
 
-    # ── CSS ───────────────────────────────────────────────────────────────────
+    # ── CSS with animations ──────────────────────────────────────────────────
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -172,6 +172,48 @@ def ensure_user_signed_in():
     }
     [data-testid="stHeader"], [data-testid="stToolbar"] { display: none; }
 
+    /* ── Animations ─────────────────────────────────────────────────────── */
+    @keyframes bounceIn {
+        0%   { transform: scale(0.3) rotate(-15deg); opacity: 0; }
+        50%  { transform: scale(1.15) rotate(5deg); opacity: 1; }
+        70%  { transform: scale(0.9) rotate(-2deg); }
+        100% { transform: scale(1) rotate(0deg); opacity: 1; }
+    }
+    @keyframes slideDown {
+        0%   { transform: translateY(-30px); opacity: 0; filter: blur(8px); }
+        100% { transform: translateY(0); opacity: 1; filter: blur(0); }
+    }
+    @keyframes fadeInUp {
+        0%   { transform: translateY(20px); opacity: 0; }
+        100% { transform: translateY(0); opacity: 1; }
+    }
+    @keyframes shimmer {
+        0%   { background-position: -200% center; }
+        100% { background-position: 200% center; }
+    }
+    @keyframes pulseGlow {
+        0%, 100% { box-shadow: 0 4px 18px rgba(14,165,233,0.35); }
+        50%      { box-shadow: 0 6px 30px rgba(14,165,233,0.6); }
+    }
+
+    .login-logo {
+        animation: bounceIn 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+    .login-title {
+        animation: slideDown 0.6s ease-out 0.2s both;
+    }
+    .login-subtitle {
+        animation: fadeInUp 0.5s ease-out 0.4s both;
+    }
+
+    /* Staggered form field animations */
+    [data-testid="stMainBlockContainer"] .stTextInput:nth-of-type(1) {
+        animation: fadeInUp 0.4s ease-out 0.5s both;
+    }
+    [data-testid="stMainBlockContainer"] .stTextInput:nth-of-type(2) {
+        animation: fadeInUp 0.4s ease-out 0.65s both;
+    }
+
     /* Inputs */
     .stTextInput > div > div > input {
         background: #ffffff;
@@ -180,28 +222,35 @@ def ensure_user_signed_in():
         color: #1e3a5f;
         font-size: 0.95rem;
         padding: 10px 14px;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .stTextInput > div > div > input:focus {
         border-color: #0ea5e9;
         box-shadow: 0 0 0 3px rgba(14,165,233,0.15);
         outline: none;
+        transform: scale(1.01);
     }
 
-    /* Primary button */
+    /* Primary button — shimmer + pulse */
     .stButton > button[kind="primary"] {
-        background: linear-gradient(90deg, #0ea5e9, #38bdf8) !important;
+        background: linear-gradient(90deg, #0ea5e9, #38bdf8, #7dd3fc, #38bdf8, #0ea5e9) !important;
+        background-size: 200% auto !important;
         color: white !important;
         border: none !important;
         border-radius: 12px !important;
         font-size: 1rem !important;
         font-weight: 600 !important;
         box-shadow: 0 4px 18px rgba(14,165,233,0.35);
-        transition: all 0.2s;
+        transition: all 0.3s;
+        animation: shimmer 3s linear infinite, pulseGlow 2s ease-in-out infinite, fadeInUp 0.4s ease-out 0.8s both;
     }
     .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(90deg, #0284c7, #0ea5e9) !important;
-        box-shadow: 0 6px 24px rgba(14,165,233,0.5);
-        transform: translateY(-1px);
+        background: linear-gradient(90deg, #0284c7, #0ea5e9, #38bdf8, #0ea5e9, #0284c7) !important;
+        box-shadow: 0 8px 32px rgba(14,165,233,0.6);
+        transform: translateY(-2px) scale(1.02);
+    }
+    .stButton > button[kind="primary"]:active {
+        transform: translateY(0) scale(0.98);
     }
 
     /* Link-style small buttons */
@@ -214,22 +263,25 @@ def ensure_user_signed_in():
         text-decoration: underline !important;
         box-shadow: none !important;
         min-height: unset !important;
+        transition: all 0.2s;
+        animation: fadeInUp 0.4s ease-out 0.7s both;
     }
     .stButton > button[kind="secondary"]:hover {
         color: #0284c7 !important;
         background: transparent !important;
+        transform: scale(1.05);
     }
     </style>
     """, unsafe_allow_html=True)
 
-    # ── Centered header (logo + title + subtitle) ─────────────────────────────
+    # ── Animated centered header ──────────────────────────────────────────────
     st.markdown("""
     <div style="text-align:center; padding: 3.5rem 0 2rem 0;">
-      <div style="font-size:3.8rem; margin-bottom:0.6rem;">📚</div>
-      <div style="font-size:2.1rem; font-weight:700; color:#0ea5e9; letter-spacing:-0.5px; line-height:1.2;">
+      <div class="login-logo" style="font-size:3.8rem; margin-bottom:0.6rem;">📚</div>
+      <div class="login-title" style="font-size:2.1rem; font-weight:700; color:#0ea5e9; letter-spacing:-0.5px; line-height:1.2;">
         Study Material Assistant
       </div>
-      <div style="font-size:0.97rem; color:#64748b; margin-top:0.4rem;">
+      <div class="login-subtitle" style="font-size:0.97rem; color:#64748b; margin-top:0.4rem;">
         Your AI-powered RAG learning companion
       </div>
     </div>
