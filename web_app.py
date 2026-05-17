@@ -156,56 +156,76 @@ def ensure_user_signed_in():
     if username and expires and expires > now:
         return
 
-    # ── Premium centered login UI ──────────────────────────────────────────────
+    # ── Ice Blue + Light Gray theme CSS ──────────────────────────────────────
     st.markdown("""
     <style>
-    /* Hide default Streamlit header/footer on login page */
-    [data-testid="stHeader"] { background: transparent; }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-    .login-wrapper {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 2rem 0 3rem 0;
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
+    /* Full page background */
+    .stApp {
+        background: linear-gradient(135deg, #e8f4fd 0%, #f0f7ff 40%, #e8f0fe 100%);
+        min-height: 100vh;
     }
-    .login-card {
-        background: linear-gradient(145deg, #1e1e2e, #16213e);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 20px;
-        padding: 2.5rem 2.5rem 2rem 2.5rem;
-        width: 100%;
-        max-width: 440px;
-        box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+    [data-testid="stHeader"] { background: transparent; }
+    [data-testid="stToolbar"] { display: none; }
+
+    /* Radio buttons */
+    div[role="radiogroup"] label {
+        background: #ffffff;
+        border: 1.5px solid #bae6fd;
+        border-radius: 30px;
+        padding: 6px 18px;
+        margin: 3px;
+        color: #0ea5e9 !important;
+        font-weight: 500;
+        transition: all 0.2s;
     }
-    .login-logo {
-        font-size: 3rem;
-        text-align: center;
-        margin-bottom: 0.2rem;
+    div[role="radiogroup"] label:has(input:checked) {
+        background: #0ea5e9;
+        color: #ffffff !important;
+        border-color: #0ea5e9;
     }
-    .login-title {
-        font-size: 1.6rem;
-        font-weight: 700;
-        text-align: center;
-        background: linear-gradient(90deg, #a78bfa, #60a5fa);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 0.2rem;
+
+    /* Input fields */
+    .stTextInput > div > div > input {
+        background: #f8fbff;
+        border: 1.5px solid #bae6fd;
+        border-radius: 10px;
+        color: #1e3a5f;
+        font-size: 0.95rem;
+        padding: 10px 14px;
     }
-    .login-subtitle {
-        text-align: center;
-        color: #94a3b8;
-        font-size: 0.9rem;
-        margin-bottom: 1.8rem;
+    .stTextInput > div > div > input:focus {
+        border-color: #0ea5e9;
+        box-shadow: 0 0 0 3px rgba(14,165,233,0.15);
+    }
+
+    /* Primary button */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(90deg, #0ea5e9, #38bdf8);
+        color: white;
+        border: none;
+        border-radius: 12px;
+        padding: 12px 0;
+        font-size: 1rem;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        transition: all 0.2s;
+        box-shadow: 0 4px 20px rgba(14,165,233,0.35);
+    }
+    .stButton > button[kind="primary"]:hover {
+        background: linear-gradient(90deg, #0284c7, #0ea5e9);
+        box-shadow: 0 6px 28px rgba(14,165,233,0.5);
+        transform: translateY(-1px);
     }
     </style>
 
-    <div class="login-wrapper">
-      <div class="login-card">
-        <div class="login-logo">📚</div>
-        <div class="login-title">Study Assistant</div>
-        <div class="login-subtitle">Your AI-powered RAG learning companion</div>
-      </div>
+    <div style="text-align:center; padding: 3rem 0 1.5rem 0;">
+      <div style="font-size:3.5rem; margin-bottom:0.5rem;">📚</div>
+      <div style="font-size:2rem; font-weight:700; color:#0ea5e9; letter-spacing:-0.5px;">Study Assistant</div>
+      <div style="font-size:0.95rem; color:#64748b; margin-top:0.3rem;">Your AI-powered RAG learning companion</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -280,7 +300,7 @@ def ensure_user_signed_in():
                         st.error("❌ Invalid email or password.")
 
         st.markdown(
-            "<p style='text-align:center; color:#475569; font-size:0.8rem; margin-top:1rem;'>"
+            "<p style='text-align:center; color:#94a3b8; font-size:0.8rem; margin-top:1.2rem;'>"
             "🔒 Your data is stored securely in the cloud</p>",
             unsafe_allow_html=True,
         )
@@ -298,12 +318,91 @@ def ensure_env():
 
 
 def main():
-    st.set_page_config(page_title="Study Material RAG Assistant", layout="wide")
-    st.title("📚 Study Material Assistant (RAG)")
-    st.write(
-        "Upload study materials and ask questions that are answered "
-        "**only from your uploaded PDFs / TXT files**."
+    st.set_page_config(
+        page_title="Study Material RAG Assistant",
+        page_icon="📚",
+        layout="wide",
     )
+
+    # ── Global ice blue + light gray theme ────────────────────────────────────
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
+    .stApp { background: #f0f7ff; }
+
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #e0f2fe, #f0f9ff) !important;
+        border-right: 1px solid #bae6fd;
+    }
+
+    /* Sidebar text */
+    [data-testid="stSidebar"] * { color: #1e3a5f !important; }
+
+    /* Headings */
+    h1, h2, h3 { color: #0369a1 !important; }
+
+    /* Buttons */
+    .stButton > button {
+        border-radius: 10px;
+        border: 1.5px solid #bae6fd;
+        background: #ffffff;
+        color: #0ea5e9;
+        font-weight: 500;
+        transition: all 0.2s;
+    }
+    .stButton > button:hover {
+        background: #e0f2fe;
+        border-color: #0ea5e9;
+        color: #0284c7;
+    }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(90deg, #0ea5e9, #38bdf8);
+        color: white;
+        border: none;
+        box-shadow: 0 4px 15px rgba(14,165,233,0.3);
+    }
+    .stButton > button[kind="primary"]:hover {
+        background: linear-gradient(90deg, #0284c7, #0ea5e9);
+        transform: translateY(-1px);
+    }
+
+    /* Input fields */
+    .stTextInput > div > div > input,
+    .stTextArea > div > div > textarea {
+        background: #ffffff;
+        border: 1.5px solid #bae6fd;
+        border-radius: 10px;
+        color: #1e3a5f;
+    }
+    .stTextInput > div > div > input:focus,
+    .stTextArea > div > div > textarea:focus {
+        border-color: #0ea5e9;
+        box-shadow: 0 0 0 3px rgba(14,165,233,0.15);
+    }
+
+    /* Radio */
+    div[role="radiogroup"] label {
+        color: #0ea5e9 !important;
+    }
+
+    /* Expanders */
+    details summary {
+        background: #e0f2fe;
+        border-radius: 8px;
+        padding: 6px 12px;
+        color: #0369a1;
+    }
+
+    /* Info / success / warning boxes */
+    .stAlert { border-radius: 10px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.title("📚 Study Material Assistant")
+    st.caption("Ask questions answered only from your uploaded PDFs & TXT files.")
 
     ensure_env()
     init_storage()
