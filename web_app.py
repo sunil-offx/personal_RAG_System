@@ -555,18 +555,21 @@ def main():
             .del-btn button {
                 background: #e0f2fe !important;
                 border: 1px solid #bae6fd !important;
-                border-radius: 8px !important;
-                color: #cbd5e1 !important;
-                font-size: 0.85rem !important;
-                padding: 2px 6px !important;
+                border-radius: 50% !important;
+                color: #1e293b !important;
+                font-size: 0.75rem !important;
+                padding: 0 !important;
+                width: 22px !important;
+                height: 22px !important;
                 min-height: unset !important;
+                line-height: 22px !important;
                 transition: all 0.2s !important;
             }
             .del-btn button:hover {
                 background: #bae6fd !important;
                 border-color: #0ea5e9 !important;
-                color: #94a3b8 !important;
-                transform: scale(1.1);
+                color: #000000 !important;
+                transform: scale(1.15);
             }
             </style>
             """, unsafe_allow_html=True)
@@ -579,7 +582,7 @@ def main():
                 with col2:
                     with st.container():
                         st.markdown('<div class="del-btn">', unsafe_allow_html=True)
-                        if st.button("🗑️", key=f"del_{fname}", help=f"Remove {fname}"):
+                        if st.button("✕", key=f"del_{fname}", help=f"Remove {fname}"):
                             try:
                                 os.remove(os.path.join(STUDY_DIR, fname))
                             except Exception as e:
