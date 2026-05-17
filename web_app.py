@@ -142,11 +142,10 @@ def set_pin(history_id: str, pinned: bool):
 
 
 def ensure_user_signed_in():
-    """Show a sign up / sign in gate the first time, and remember for 48h."""
+    """Show a centered, premium sign-in gate and remember session for 48h."""
     now = datetime.utcnow()
     expires = st.session_state.get("signed_in_expires")
 
-    # Normalize expires if it's a string
     if isinstance(expires, str):
         try:
             expires = datetime.fromisoformat(expires)
@@ -154,58 +153,140 @@ def ensure_user_signed_in():
             expires = None
 
     username = st.session_state.get("username")
-
     if username and expires and expires > now:
-        # User is still within the 48h window
         return
 
-    st.markdown("### Welcome to Study Material Assistant")
-    st.write("Please **sign in or sign up** to start using the application.")
+    # ── Premium centered login UI ──────────────────────────────────────────────
+    st.markdown("""
+    <style>
+    /* Hide default Streamlit header/footer on login page */
+    [data-testid="stHeader"] { background: transparent; }
 
-    choice = st.radio("Select an option", ["Sign In", "Sign Up", "Admin Login"], horizontal=True)
+    .login-wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem 0 3rem 0;
+    }
+    .login-card {
+        background: linear-gradient(145deg, #1e1e2e, #16213e);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 20px;
+        padding: 2.5rem 2.5rem 2rem 2.5rem;
+        width: 100%;
+        max-width: 440px;
+        box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+    }
+    .login-logo {
+        font-size: 3rem;
+        text-align: center;
+        margin-bottom: 0.2rem;
+    }
+    .login-title {
+        font-size: 1.6rem;
+        font-weight: 700;
+        text-align: center;
+        background: linear-gradient(90deg, #a78bfa, #60a5fa);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.2rem;
+    }
+    .login-subtitle {
+        text-align: center;
+        color: #94a3b8;
+        font-size: 0.9rem;
+        margin-bottom: 1.8rem;
+    }
+    </style>
 
-    if choice == "Admin Login":
-        st.info("Log in using the admin password.")
-        email_input = "admin"
-        password_input = st.text_input("Admin Password", type="password", key="auth_pass_input_admin")
-    else:
-        email_input = st.text_input("Email / Gmail", key="auth_email_input")
-        password_input = st.text_input("Password", type="password", key="auth_pass_input")
+    <div class="login-wrapper">
+      <div class="login-card">
+        <div class="login-logo">📚</div>
+        <div class="login-title">Study Assistant</div>
+        <div class="login-subtitle">Your AI-powered RAG learning companion</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    if st.button("Continue"):
-        email = email_input.strip()
-        pwd = password_input.strip()
-        
-        if choice == "Admin Login":
-            if pwd == "myadminsecret":
-                st.session_state["username"] = "admin"
-                st.session_state["is_admin"] = True
-                st.session_state["signed_in_expires"] = now + timedelta(hours=48)
-                st.success("Signed in as Admin!")
-                st.rerun()
-            else:
-                st.error("Invalid admin credentials.")
+    # Center the form using columns
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
+        choice = st.radio(
+            "Mode",
+            ["Sign In", "Sign Up", "Admin"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        if choice == "Admin":
+            st.markdown("🔐 **Admin Login**")
+            email_input = "admin"
+            password_input = st.text_input(
+                "Admin Password", type="password",
+                placeholder="Enter admin password",
+                key="auth_pass_input_admin"
+            )
         else:
-            if not email or not pwd:
-                st.warning("Please enter both email and password.")
-            elif choice == "Sign Up":
-                if create_user(email, pwd):
-                    st.success("Account created successfully. You can now switch to 'Sign In' and log in.")
-                else:
-                    st.error("An account with this email/Gmail already exists.")
-            elif choice == "Sign In":
-                ok, user_email = authenticate_user(email, pwd)
-                if ok:
-                    st.session_state["username"] = user_email
-                    st.session_state["is_admin"] = (user_email == "admin")
+            email_input = st.text_input(
+                "📧 Email", placeholder="you@example.com",
+                key="auth_email_input"
+            )
+            password_input = st.text_input(
+                "🔒 Password", type="password",
+                placeholder="Your password",
+                key="auth_pass_input"
+            )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        if st.button(
+            "→ Continue" if choice == "Sign In" or choice == "Admin"
+            else "→ Create Account",
+            use_container_width=True,
+            type="primary",
+        ):
+            email = email_input.strip()
+            pwd = password_input.strip()
+
+            if choice == "Admin":
+                if pwd == os.environ.get("ADMIN_PASSWORD", "Admin@Study2025"):
+                    st.session_state["username"] = "admin"
+                    st.session_state["is_admin"] = True
                     st.session_state["signed_in_expires"] = now + timedelta(hours=48)
-                    st.success(f"Signed in as `{user_email}`.")
+                    st.success("✅ Signed in as Admin!")
                     st.rerun()
                 else:
-                    st.error("Invalid email or password.")
-                    
-    # Stop rendering the rest of the app until the user signs in
+                    st.error("❌ Invalid admin password.")
+            else:
+                if not email or not pwd:
+                    st.warning("⚠️ Please fill in both fields.")
+                elif choice == "Sign Up":
+                    if create_user(email, pwd):
+                        st.success("✅ Account created! Switch to Sign In to continue.")
+                    else:
+                        st.error("❌ An account with this email already exists.")
+                elif choice == "Sign In":
+                    ok, user_email = authenticate_user(email, pwd)
+                    if ok:
+                        st.session_state["username"] = user_email
+                        st.session_state["is_admin"] = (user_email == "admin")
+                        st.session_state["signed_in_expires"] = now + timedelta(hours=48)
+                        st.success(f"✅ Welcome back, `{user_email}`!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Invalid email or password.")
+
+        st.markdown(
+            "<p style='text-align:center; color:#475569; font-size:0.8rem; margin-top:1rem;'>"
+            "🔒 Your data is stored securely in the cloud</p>",
+            unsafe_allow_html=True,
+        )
+
     st.stop()
+
 
 
 def ensure_env():
