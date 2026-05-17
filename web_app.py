@@ -450,12 +450,17 @@ def main():
     </style>
     """, unsafe_allow_html=True)
 
-    st.title("📚 Study Material Assistant")
-    st.caption("Ask questions answered only from your uploaded PDFs & TXT files.")
-
     ensure_env()
     init_storage()
     ensure_user_signed_in()
+
+    st.markdown("""
+    <div style="text-align:center; padding: 1rem 0 2rem 0;">
+      <div style="font-size:2.5rem; margin-bottom:0.2rem;">📚</div>
+      <div style="font-size:2.2rem; font-weight:700; color:#0369a1; letter-spacing:-0.5px;">Hey there! Ready to study?</div>
+      <div style="font-size:1.05rem; color:#64748b; margin-top:0.2rem;">Drop your PDFs or text files below and ask me anything about them.</div>
+    </div>
+    """, unsafe_allow_html=True)
 
     # Simple account area in sidebar (after initial sign-in gate)
     with st.sidebar:
