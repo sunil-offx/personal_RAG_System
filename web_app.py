@@ -549,19 +549,43 @@ def main():
         selected_files = []
         if existing_files:
             st.markdown("**Currently uploaded files:**")
+            # Style for delete buttons
+            st.markdown("""
+            <style>
+            .del-btn button {
+                background: #f1f5f9 !important;
+                border: 1px solid #e2e8f0 !important;
+                border-radius: 8px !important;
+                color: #94a3b8 !important;
+                font-size: 0.85rem !important;
+                padding: 2px 6px !important;
+                min-height: unset !important;
+                transition: all 0.2s !important;
+            }
+            .del-btn button:hover {
+                background: #fee2e2 !important;
+                border-color: #fca5a5 !important;
+                color: #ef4444 !important;
+                transform: scale(1.1);
+            }
+            </style>
+            """, unsafe_allow_html=True)
             for fname in sorted(existing_files):
-                col1, col2 = st.columns([0.85, 0.15])
+                col1, col2 = st.columns([0.88, 0.12])
                 with col1:
                     is_selected = st.checkbox(f"{fname}", value=True, key=f"sel_{fname}")
                     if is_selected:
                         selected_files.append(fname)
                 with col2:
-                    if st.button("❌", key=f"del_{fname}", help="Remove file"):
-                        try:
-                            os.remove(os.path.join(STUDY_DIR, fname))
-                        except Exception as e:
-                            st.error(f"Failed to delete {fname}: {e}")
-                        st.rerun()
+                    with st.container():
+                        st.markdown('<div class="del-btn">', unsafe_allow_html=True)
+                        if st.button("🗑️", key=f"del_{fname}", help=f"Remove {fname}"):
+                            try:
+                                os.remove(os.path.join(STUDY_DIR, fname))
+                            except Exception as e:
+                                st.error(f"Failed to delete {fname}: {e}")
+                            st.rerun()
+                        st.markdown('</div>', unsafe_allow_html=True)
         st.session_state["selected_files"] = selected_files
 
         if "file_uploader_key" not in st.session_state:
