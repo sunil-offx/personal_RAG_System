@@ -553,19 +553,19 @@ def main():
             st.markdown("""
             <style>
             .del-btn button {
-                background: #f1f5f9 !important;
-                border: 1px solid #e2e8f0 !important;
+                background: #e0f2fe !important;
+                border: 1px solid #bae6fd !important;
                 border-radius: 8px !important;
-                color: #94a3b8 !important;
+                color: #cbd5e1 !important;
                 font-size: 0.85rem !important;
                 padding: 2px 6px !important;
                 min-height: unset !important;
                 transition: all 0.2s !important;
             }
             .del-btn button:hover {
-                background: #fee2e2 !important;
-                border-color: #fca5a5 !important;
-                color: #ef4444 !important;
+                background: #bae6fd !important;
+                border-color: #0ea5e9 !important;
+                color: #94a3b8 !important;
                 transform: scale(1.1);
             }
             </style>
