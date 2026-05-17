@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import sqlite3
-import tempfile
+import psycopg2
+import psycopg2.extras
 import subprocess
 from datetime import datetime, timedelta
 
@@ -24,18 +24,30 @@ from rag_study_assistant import (
     answer_question,
 )
 
-DB_PATH = os.environ.get("DB_PATH", os.path.join(tempfile.gettempdir(), "study_materials.db"))
+# ── Cloud DB connection ────────────────────────────────────────────────────────
+DATABASE_URL = os.environ.get("DATABASE_URL") or (
+    st.secrets.get("DATABASE_URL") if hasattr(st, "secrets") else None
+)
+
+def get_conn():
+    """Return a new psycopg2 connection to Supabase PostgreSQL."""
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL is not set. Add it to your .env file or Streamlit secrets."
+        )
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
 def init_storage():
-    """Ensure study folder and SQLite DB exist."""
+    """Ensure study folder exists and cloud DB tables are created."""
     STUDY_DIR.mkdir(exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
+    cur = conn.cursor()
     # Uploaded files table
-    conn.execute(
+    cur.execute(
         """
         CREATE TABLE IF NOT EXISTS uploads (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             filename TEXT NOT NULL,
             original_name TEXT NOT NULL,
             size_bytes INTEGER NOT NULL,
@@ -43,11 +55,11 @@ def init_storage():
         );
         """
     )
-    # Simple history table for Q&A
-    conn.execute(
+    # Q&A history table
+    cur.execute(
         """
         CREATE TABLE IF NOT EXISTS history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             username TEXT NOT NULL,
             question TEXT NOT NULL,
             answer TEXT NOT NULL,
@@ -57,10 +69,10 @@ def init_storage():
         """
     )
     # Users table for auth
-    conn.execute(
+    cur.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             created_at TEXT NOT NULL
@@ -68,6 +80,7 @@ def init_storage():
         """
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 def hash_password(password: str) -> str:
@@ -76,102 +89,110 @@ def hash_password(password: str) -> str:
 def authenticate_user(email, password):
     if email == "admin" and password == "myadminsecret":
         return True, "admin"
-    
-    conn = sqlite3.connect(DB_PATH)
+
+    conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT password_hash FROM users WHERE email = ?", (email,))
+    cur.execute("SELECT password_hash FROM users WHERE email = %s", (email,))
     row = cur.fetchone()
+    cur.close()
     conn.close()
     if row and row[0] == hash_password(password):
         return True, email
     return False, None
 
 def create_user(email, password):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     try:
-        conn.execute(
-            "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO users (email, password_hash, created_at) VALUES (%s, %s, %s)",
             (email, hash_password(password), datetime.utcnow().isoformat())
         )
         conn.commit()
+        cur.close()
         return True
-    except sqlite3.IntegrityError:
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
         return False
     finally:
         conn.close()
 
 
 def record_upload(filename: str, original_name: str, size_bytes: int):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "INSERT INTO uploads (filename, original_name, size_bytes, uploaded_at) VALUES (?, ?, ?, ?)",
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO uploads (filename, original_name, size_bytes, uploaded_at) VALUES (%s, %s, %s, %s)",
         (filename, original_name, size_bytes, datetime.utcnow().isoformat()),
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def load_uploads():
-    if not os.path.exists(DB_PATH):
-        return []
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cur = conn.cursor()
     cur.execute(
         "SELECT filename, original_name, size_bytes, uploaded_at FROM uploads ORDER BY uploaded_at DESC"
     )
     rows = cur.fetchall()
+    cur.close()
     conn.close()
     return rows
 
 
 def save_history(username: str, question: str, answer: str):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
         """
         INSERT INTO history (username, question, answer, pinned, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
         """,
         (username, question, answer, 0, datetime.utcnow().isoformat()),
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def load_history(username: str):
-    if not os.path.exists(DB_PATH):
-        return []
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cur = conn.cursor()
     cur.execute(
         """
         SELECT id, question, answer, pinned, created_at
         FROM history
-        WHERE username = ?
+        WHERE username = %s
         ORDER BY pinned DESC, created_at DESC
         """,
         (username,),
     )
     rows = cur.fetchall()
+    cur.close()
     conn.close()
     return rows
 
 
 def clear_history(username: str):
-    if not os.path.exists(DB_PATH):
-        return
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("DELETE FROM history WHERE username = ?", (username,))
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM history WHERE username = %s", (username,))
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def set_pin(history_id: int, pinned: bool):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "UPDATE history SET pinned = ? WHERE id = ?",
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE history SET pinned = %s WHERE id = %s",
         (1 if pinned else 0, history_id),
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
