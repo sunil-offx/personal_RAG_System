@@ -11,7 +11,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 from PyPDF2 import PdfReader
 from openai import OpenAI
+from dotenv import load_dotenv
 
+load_dotenv()
 
 STUDY_DIR = Path(os.environ.get("STUDY_DIR", os.path.join(tempfile.gettempdir(), "study_materials")))
 INDEX_PATH = Path(os.environ.get("INDEX_PATH", os.path.join(tempfile.gettempdir(), "study_index.pkl")))
@@ -183,7 +185,7 @@ def get_groq_client() -> OpenAI:
     if not api_key:
         raise RuntimeError(
             "GROQ_API_KEY environment variable is not set. "
-            "Set it to your Groq API key before using chat mode."
+            "Please add your Groq API key to the .env file in the project directory."
         )
     # Groq provides an OpenAI-compatible API.
     return OpenAI(api_key=api_key, base_url=GROQ_BASE_URL)

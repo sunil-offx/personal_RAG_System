@@ -79,31 +79,7 @@ Then type your questions. The assistant will:
 - Ask the Groq model to answer **only using those chunks**
 - If the answer is not in your materials, it will say it cannot answer from them
 
-### 6. Web application (Streamlit)
-
-There is also a simple web UI using Streamlit.
-
-Run:
-
-```bash
-streamlit run web_app.py
-```
-
-Then open the URL shown in the terminal (usually `http://localhost:8501`).
-
-- Use the sidebar button **“Rebuild index from study materials”** after you add/change PDFs or text files.
-- Ask questions in the main panel; answers still come **only from your study materials**.
-
-### 7. Notes
+### 6. Notes
 
 - If you add or change study materials, run `ingest` again to rebuild the index.
 - Answers are strictly grounded in your uploaded notes/books; no outside knowledge is allowed.
-
-
--Start up or runnning command ffor web_app.py [INTIALILLY LIKE OPEN CURSOR AFTER THE CLOSING OF CURSOR APPLICATION] it needed only ONCE-
-
-
- $env:GROQ_API_KEY = "your_groq_api_key_here"
- $env:GROQ_MODEL = "llama-3.1-8b-instant"
- & "C:\Program Files\Python311\python.exe" -m streamlit run web_app.py
-
