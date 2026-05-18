@@ -12,6 +12,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 
 import streamlit as st
+import extra_streamlit_components as stx
 import importlib
 import sys
 
@@ -207,26 +208,33 @@ def ensure_user_signed_in():
     }
 
     /* Staggered form field animations */
-    [data-testid="stMainBlockContainer"] .stTextInput:nth-of-type(1) {
+    [data-testid="stMainBlockContainer"] div[data-testid="stTextInput"]:nth-of-type(1) {
         animation: fadeInUp 0.4s ease-out 0.5s both;
     }
-    [data-testid="stMainBlockContainer"] .stTextInput:nth-of-type(2) {
+    [data-testid="stMainBlockContainer"] div[data-testid="stTextInput"]:nth-of-type(2) {
         animation: fadeInUp 0.4s ease-out 0.65s both;
     }
 
+    /* Labels */
+    div[data-testid="stTextInput"] label,
+    div[data-testid="stTextInput"] label p {
+        color: #000000 !important;
+    }
+
     /* Inputs */
-    .stTextInput > div > div > input {
-        background: #ffffff;
-        border: 1.5px solid #bae6fd;
-        border-radius: 10px;
-        color: #1e3a5f;
+    div[data-testid="stTextInput"] input {
+        background: #ffffff !important;
+        border: 1.5px solid #7dd3fc !important;
+        border-radius: 10px !important;
+        color: #000000 !important;
         font-size: 0.95rem;
         padding: 10px 14px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.04) !important;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    .stTextInput > div > div > input:focus {
-        border-color: #0ea5e9;
-        box-shadow: 0 0 0 3px rgba(14,165,233,0.15);
+    div[data-testid="stTextInput"] input:focus {
+        border-color: #0ea5e9 !important;
+        box-shadow: 0 0 0 3px rgba(14,165,233,0.15) !important;
         outline: none;
         transform: scale(1.01);
     }
@@ -315,11 +323,11 @@ def ensure_user_signed_in():
             password_input = pwd_input
         else:
             email_input = st.text_input(
-                "📧 Email", placeholder="you@example.com",
+                "Email", placeholder="you@example.com",
                 key="f_email",
             )
             password_input = st.text_input(
-                "🔒 Password", type="password",
+                "Password", type="password",
                 placeholder="Create a password" if mode == "signup" else "Your password",
                 key="f_pwd",
             )
@@ -470,18 +478,25 @@ def main():
         transform: translateY(-1px);
     }
 
-    /* Input fields */
-    .stTextInput > div > div > input,
-    .stTextArea > div > div > textarea {
-        background: #ffffff;
-        border: 1.5px solid #bae6fd;
-        border-radius: 10px;
-        color: #1e3a5f;
+    /* Input fields & Labels */
+    [data-testid="stWidgetLabel"] p {
+        color: #0f172a !important;
+        font-weight: 600 !important;
     }
-    .stTextInput > div > div > input:focus,
-    .stTextArea > div > div > textarea:focus {
-        border-color: #0ea5e9;
-        box-shadow: 0 0 0 3px rgba(14,165,233,0.15);
+    
+    div[data-testid="stTextInput"] input,
+    div[data-testid="stTextArea"] textarea {
+        background: #ffffff !important;
+        border: 1.5px solid #7dd3fc !important;
+        border-radius: 10px !important;
+        color: #000000 !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.04) !important;
+    }
+    div[data-testid="stTextInput"] input:focus,
+    div[data-testid="stTextArea"] textarea:focus {
+        border-color: #0ea5e9 !important;
+        box-shadow: 0 0 0 3px rgba(14,165,233,0.15) !important;
+    }
     }
 
     /* Radio */
