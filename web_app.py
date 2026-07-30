@@ -10,9 +10,12 @@ load_dotenv()
 import streamlit as st
 
 if hasattr(st, "secrets"):
-    if "FIREBASE_KEY" in st.secrets and not os.path.exists("firebase_key.json"):
-        with open("firebase_key.json", "w") as f:
-            f.write(st.secrets["FIREBASE_KEY"])
+    try:
+        if "FIREBASE_KEY" in st.secrets and not os.path.exists("firebase_key.json"):
+            with open("firebase_key.json", "w") as f:
+                f.write(st.secrets["FIREBASE_KEY"])
+    except Exception:
+        pass
 
 import subprocess
 from datetime import datetime, timedelta
@@ -326,60 +329,6 @@ def ensure_user_signed_in():
     # ── Centered form ─────────────────────────────────────────────────────────
     _, col, _ = st.columns([1, 2, 1])
     with col:
-
-        import google_drive_util
-        import importlib
-        importlib.reload(google_drive_util)
-        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-        
-        # Check for credentials
-        if not os.path.exists("google_credentials.json"):
-            st.error("Missing `google_credentials.json`!")
-            st.warning("Please create a Google Cloud Project, enable the Drive API, and download your OAuth client secrets to `google_credentials.json` in this folder.")
-            st.stop()
-
-        # Handle OAuth Callback
-        if "code" in st.query_params:
-            try:
-                flow = google_drive_util.get_flow()
-                import json
-                if os.path.exists(".oauth_state.json"):
-                    with open(".oauth_state.json", "r") as f:
-                        data = json.load(f)
-                    if "code_verifier" in data:
-                        flow.code_verifier = data["code_verifier"]
-                        
-                flow.fetch_token(code=st.query_params["code"])
-                creds = flow.credentials
-                
-                # Fetch user email
-                session = flow.authorized_session()
-                user_info = session.get('https://www.googleapis.com/userinfo/v2/me').json()
-                email = user_info.get("email", "unknown_google_user")
-                
-                # Store in session state
-                st.session_state["google_creds"] = creds
-                st.session_state["username"] = email
-                st.session_state["is_admin"] = (email == "[EMAIL_ADDRESS]")
-                st.session_state["signed_in_expires"] = now + timedelta(hours=48)
-                
-                # Register in firebase if new, or update last login
-                db = get_db()
-                existing = list(db.collection("users").where("email", "==", email).limit(1).stream())
-                if not existing:
-                    db.collection("users").add({
-                        "email": email,
-                        "created_at": datetime.utcnow().isoformat(),
-                        "last_login": datetime.utcnow().isoformat()
-                    })
-                else:
-                    existing[0].reference.update({"last_login": datetime.utcnow().isoformat()})
-                
-                st.query_params.clear()
-                st.rerun()
-            except Exception as e:
-                st.error(f"Authentication failed: {e}")
-                
         st.markdown("<h4 style='text-align:center; color:#FF4103; margin-bottom:1rem;'>Sign In</h4>", unsafe_allow_html=True)
         
         tab1, tab2 = st.tabs(["Sign In", "Sign Up"])
