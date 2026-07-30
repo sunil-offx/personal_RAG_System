@@ -559,6 +559,13 @@ def main():
 
     /* Info / success / warning boxes */
     .stAlert { border-radius: 10px; background: rgba(0, 22, 33, 0.8) !important; color: #ffffff !important; border: 1px solid rgba(255, 255, 255, 0.1); }
+
+    /* Transparent Chat Input Container Background */
+    [data-testid="stBottomBlockContainer"],
+    [data-testid="stBottom"],
+    .stChatFloatingInputContainer {
+        background: transparent !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
