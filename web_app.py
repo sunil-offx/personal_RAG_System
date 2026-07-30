@@ -390,7 +390,7 @@ def ensure_user_signed_in():
             
             try:
                 flow = google_drive_util.get_flow()
-                auth_url, state = flow.authorization_url(prompt='consent select_account')
+                auth_url, state = flow.authorization_url(prompt='select_account')
                 
                 import json
                 data = {}
