@@ -9,9 +9,8 @@ from typing import List, Tuple, Optional
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
-import fitz  # PyMuPDF
-from PIL import Image
-import pytesseract
+import nest_asyncio
+from llama_parse import LlamaParse
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -57,25 +56,33 @@ def read_txt(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
-# Configure pytesseract path if it's installed via winget to the default location on Windows
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\tesseract.exe'
-
 def read_pdf(path: Path) -> List[Tuple[int, str]]:
-    doc = fitz.open(path)
+    nest_asyncio.apply()
+    
+    api_key = os.environ.get("LLAMA_CLOUD_API_KEY")
+    try:
+        import streamlit as st
+        if not api_key and hasattr(st, "secrets") and "LLAMA_CLOUD_API_KEY" in st.secrets:
+            api_key = st.secrets["LLAMA_CLOUD_API_KEY"]
+    except Exception:
+        pass
+        
+    if not api_key:
+        raise ValueError("LLAMA_CLOUD_API_KEY is missing. Please add it to Streamlit Secrets or .env file.")
+        
+    print(f"Parsing {path.name} with LlamaParse...")
+    parser = LlamaParse(
+        api_key=api_key,
+        result_type="markdown",
+        verbose=True
+    )
+    
+    documents = parser.load_data(str(path))
+    
     pages: List[Tuple[int, str]] = []
-    for i in range(len(doc)):
-        page = doc[i]
-        text = page.get_text().strip()
-        if len(text) < 20: # Likely an image or scanned page
-            try:
-                import io
-                pix = page.get_pixmap()
-                img = Image.open(io.BytesIO(pix.tobytes("png")))
-                ocr_text = pytesseract.image_to_string(img)
-                text = text + "\n" + ocr_text.strip()
-            except Exception as e:
-                print(f"OCR failed for page {i+1}: {e}")
-        pages.append((i + 1, text))
+    for i, doc in enumerate(documents):
+        pages.append((i + 1, doc.text))
+        
     return pages
 
 
