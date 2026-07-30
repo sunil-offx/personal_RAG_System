@@ -9,14 +9,16 @@ from typing import List, Tuple, Optional
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
-from PyPDF2 import PdfReader
+import fitz  # PyMuPDF
+from PIL import Image
+import pytesseract
 from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
 
-STUDY_DIR = Path(os.environ.get("STUDY_DIR", os.path.join(tempfile.gettempdir(), "study_materials")))
-INDEX_PATH = Path(os.environ.get("INDEX_PATH", os.path.join(tempfile.gettempdir(), "study_index.pkl")))
+STUDY_DIR = Path(os.environ.get("STUDY_DIR", Path(__file__).parent / "study_materials"))
+INDEX_PATH = Path(os.environ.get("INDEX_PATH", Path(__file__).parent / "study_index.pkl"))
 EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_CHAT_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
@@ -29,20 +31,23 @@ class Chunk:
     page: int | None = None
 
 
-def load_study_files() -> List[Path]:
-    if not STUDY_DIR.exists():
+def load_study_files(study_dir: Path = None) -> List[Path]:
+    if study_dir is None:
+        study_dir = STUDY_DIR
+        
+    if not study_dir.exists():
         raise FileNotFoundError(
-            f"Study materials folder '{STUDY_DIR}' does not exist. "
+            f"Study materials folder '{study_dir}' does not exist. "
             f"Create it next to this script and put your PDFs or .txt files inside."
         )
 
     files: List[Path] = []
     for ext in ("*.pdf", "*.txt"):
-        files.extend(STUDY_DIR.glob(ext))
+        files.extend(study_dir.glob(ext))
 
     if not files:
         raise FileNotFoundError(
-            f"No study files found in '{STUDY_DIR}'. "
+            f"No study files found in '{study_dir}'. "
             f"Add some .pdf or .txt files and run ingest again."
         )
     return files
@@ -52,11 +57,23 @@ def read_txt(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
+# Configure pytesseract path if it's installed via winget to the default location on Windows
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\tesseract.exe'
+
 def read_pdf(path: Path) -> List[Tuple[int, str]]:
-    reader = PdfReader(path)
+    doc = fitz.open(path)
     pages: List[Tuple[int, str]] = []
-    for i, page in enumerate(reader.pages):
-        text = page.extract_text() or ""
+    for i in range(len(doc)):
+        page = doc[i]
+        text = page.get_text().strip()
+        if len(text) < 20: # Likely an image or scanned page
+            try:
+                pix = page.get_pixmap()
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                ocr_text = pytesseract.image_to_string(img)
+                text = text + "\n" + ocr_text.strip()
+            except Exception as e:
+                print(f"OCR failed for page {i+1}: {e}")
         pages.append((i + 1, text))
     return pages
 
@@ -78,8 +95,8 @@ def chunk_text(text: str, max_tokens: int = 512, overlap: int = 128) -> List[str
     return chunks
 
 
-def build_chunks() -> List[Chunk]:
-    files = load_study_files()
+def build_chunks(study_dir: Path = None) -> List[Chunk]:
+    files = load_study_files(study_dir)
     chunks: List[Chunk] = []
 
     for f in files:
@@ -103,9 +120,14 @@ def get_embedder() -> SentenceTransformer:
     return SentenceTransformer(EMBED_MODEL_NAME)
 
 
-def ingest() -> None:
-    print(f"Loading study materials from '{STUDY_DIR}'...")
-    chunks = build_chunks()
+def ingest(study_dir: Path = None, index_path: Path = None) -> None:
+    if study_dir is None:
+        study_dir = STUDY_DIR
+    if index_path is None:
+        index_path = INDEX_PATH
+        
+    print(f"Loading study materials from '{study_dir}'...")
+    chunks = build_chunks(study_dir)
     print(f"Found {len(chunks)} text chunks. Computing embeddings...")
 
     embedder = get_embedder()
@@ -118,18 +140,21 @@ def ingest() -> None:
         "embed_model": EMBED_MODEL_NAME,
     }
 
-    with INDEX_PATH.open("wb") as f:
+    with index_path.open("wb") as f:
         pickle.dump(index_data, f)
 
-    print(f"Index saved to '{INDEX_PATH}'. You can now run in chat mode.")
+    print(f"Index saved to '{index_path}'. You can now run in chat mode.")
 
 
-def load_index():
-    if not INDEX_PATH.exists():
+def load_index(index_path: Path = None):
+    if index_path is None:
+        index_path = INDEX_PATH
+        
+    if not index_path.exists():
         raise FileNotFoundError(
-            f"Index file '{INDEX_PATH}' not found. Run with 'ingest' first."
+            f"Index file '{index_path}' not found. Run with 'ingest' first."
         )
-    with INDEX_PATH.open("rb") as f:
+    with index_path.open("rb") as f:
         index_data = pickle.load(f)
 
     if index_data.get("embed_model") != EMBED_MODEL_NAME:
@@ -140,8 +165,8 @@ def load_index():
     return index_data
 
 
-def retrieve(query: str, k: int = 5, allowed_sources: Optional[List[str]] = None) -> List[Chunk]:
-    index = load_index()
+def retrieve(query: str, k: int = 5, allowed_sources: Optional[List[str]] = None, index_path: Path = None) -> List[Chunk]:
+    index = load_index(index_path)
     embeddings: np.ndarray = index["embeddings"]
     chunks: List[Chunk] = index["chunks"]
 
@@ -199,10 +224,12 @@ def answer_question(question: str, chunks: List[Chunk]) -> str:
     client = get_groq_client()
 
     system_prompt = (
-        "You are a helpful and intelligent study assistant. You must answer questions "
-        "using ONLY the provided study material excerpts. "
-        "Structure your answers to be highly attractive, readable, and well-formatted, using Markdown features like headings, bullet points, italics, or bold text where appropriate (similar to ChatGPT). "
-        "Do NOT mention the names of the source files, filenames, or page numbers in your response. Just provide the direct, beautifully formatted answer. "
+        "You are a friendly, conversational, and highly intelligent study tutor. "
+        "Your goal is to explain concepts clearly, breaking them down so they are easy to understand, as if you are having a one-on-one conversation with a student. "
+        "You must base your explanations ONLY on the provided study material excerpts. "
+        "Structure your answers to be highly readable and well-formatted using Markdown (headings, bullet points, italics, bold text). "
+        "Speak directly to the user (e.g., 'Sure, let's break that down!', 'Here's how it works:'). "
+        "Do NOT mention the names of the source files, filenames, or page numbers in your response. "
         "If the answer to the question is not clearly supported by the material, explicitly state EXACTLY: "
         "'the study material not found'. "
         "Do not use outside knowledge."
@@ -211,7 +238,7 @@ def answer_question(question: str, chunks: List[Chunk]) -> str:
     user_prompt = (
         f"Study material excerpts:\n\n{context}\n\n"
         f"Question: {question}\n\n"
-        "Answer the question beautifully and comprehensively using only the excerpts above. Do NOT mention which study material or page was used. If it cannot be answered from the excerpts, output EXACTLY 'the study material not found'."
+        "Explain the answer in a clear, conversational, and easy-to-understand way, using only the excerpts above. Speak directly to me like a tutor. Do NOT mention which study material or page was used. If it cannot be answered from the excerpts, output EXACTLY 'the study material not found'."
     )
 
     completion = client.chat.completions.create(

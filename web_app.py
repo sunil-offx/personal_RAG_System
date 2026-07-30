@@ -1,6 +1,7 @@
 import hashlib
 import os
 import json
+import google_drive_util
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,6 +26,7 @@ from rag_study_assistant import (
     ingest,
     retrieve,
     answer_question,
+    Chunk
 )
 
 # ── Firebase / Firestore setup ─────────────────────────────────────────────────
@@ -32,11 +34,14 @@ from rag_study_assistant import (
 def get_db():
     """Initialize Firebase app and return Firestore client (cached per session)."""
     if not firebase_admin._apps:
-        # Try loading key from Streamlit secrets first, then from local file
-        if hasattr(st, "secrets") and "FIREBASE_KEY" in st.secrets:
-            key_dict = json.loads(st.secrets["FIREBASE_KEY"])
-            cred = credentials.Certificate(key_dict)
-        else:
+        try:
+            if hasattr(st, "secrets") and "FIREBASE_KEY" in st.secrets:
+                key_dict = json.loads(st.secrets["FIREBASE_KEY"])
+                cred = credentials.Certificate(key_dict)
+            else:
+                key_path = os.environ.get("FIREBASE_KEY_PATH", "firebase_key.json")
+                cred = credentials.Certificate(key_path)
+        except Exception:
             key_path = os.environ.get("FIREBASE_KEY_PATH", "firebase_key.json")
             cred = credentials.Certificate(key_path)
         firebase_admin.initialize_app(cred)
@@ -62,6 +67,7 @@ def authenticate_user(email, password):
     for doc in docs:
         data = doc.to_dict()
         if data.get("password_hash") == hash_password(password):
+            doc.reference.update({"last_login": datetime.utcnow().isoformat()})
             return True, email
     return False, None
 
@@ -78,6 +84,19 @@ def create_user(email, password):
         "created_at": datetime.utcnow().isoformat(),
     })
     return True
+
+
+def load_users():
+    db = get_db()
+    docs = db.collection("users").stream()
+    return [
+        {
+            "Email": d.to_dict().get("email"),
+            "Sign Up Date": d.to_dict().get("created_at"),
+            "Last Login": d.to_dict().get("last_login", "Never")
+        }
+        for d in docs
+    ]
 
 
 def record_upload(filename: str, original_name: str, size_bytes: int):
@@ -145,6 +164,29 @@ def set_pin(history_id: str, pinned: bool):
 def ensure_user_signed_in():
     """Centered login gate — Sign Up default, Sign In & Admin as links below."""
     now = datetime.utcnow()
+    
+    import pickle
+    import os
+    from google.auth.transport.requests import Request
+    from datetime import timedelta
+    if "username" not in st.session_state and os.path.exists("token.pickle"):
+        try:
+            with open("token.pickle", "rb") as token:
+                data = pickle.load(token)
+                creds = data.get("creds")
+                email = data.get("email")
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                with open("token.pickle", "wb") as token:
+                    pickle.dump({"creds": creds, "email": email}, token)
+            if creds and creds.valid:
+                st.session_state["google_creds"] = creds
+                st.session_state["username"] = email
+                st.session_state["is_admin"] = False
+                st.session_state["signed_in_expires"] = now + timedelta(hours=48)
+        except Exception:
+            pass
+
     expires = st.session_state.get("signed_in_expires")
     if isinstance(expires, str):
         try:
@@ -299,119 +341,90 @@ def ensure_user_signed_in():
     _, col, _ = st.columns([1, 2, 1])
     with col:
 
-        # Mode heading
-        mode_labels = {
-            "signup": "✨ Create your account",
-            "signin": "👋 Welcome back",
-            "admin":  "🔐 Admin Login",
-        }
-        st.markdown(
-            f"<h4 style='text-align:center; color:#0369a1; margin-bottom:1rem;'>"
-            f"{mode_labels[mode]}</h4>",
-            unsafe_allow_html=True,
-        )
+        import google_drive_util
+        import importlib
+        importlib.reload(google_drive_util)
+        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+        
+        # Check for credentials
+        if not os.path.exists("google_credentials.json"):
+            st.error("Missing `google_credentials.json`!")
+            st.warning("Please create a Google Cloud Project, enable the Drive API, and download your OAuth client secrets to `google_credentials.json` in this folder.")
+            st.stop()
 
-        # Form fields
-        if mode == "admin":
-            email_val = "admin"
-            pwd_input = st.text_input(
-                "Admin Password", type="password",
-                placeholder="Enter admin password",
-                key="f_admin_pwd",
-            )
-            email_input = email_val
-            password_input = pwd_input
-        else:
-            email_input = st.text_input(
-                "Email", placeholder="you@example.com",
-                key="f_email",
-            )
-            password_input = st.text_input(
-                "Password", type="password",
-                placeholder="Create a password" if mode == "signup" else "Your password",
-                key="f_pwd",
-            )
-
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-        # ── Centered mode-switch links below password ─────────────────────────
-        link_cols = st.columns([1, 1, 1, 1, 1])
-        if mode == "signup":
-            with link_cols[1]:
-                if st.button("Sign In", key="lnk_signin", type="secondary"):
-                    st.session_state["login_mode"] = "signin"
-                    st.rerun()
-            with link_cols[3]:
-                if st.button("Admin", key="lnk_admin", type="secondary"):
-                    st.session_state["login_mode"] = "admin"
-                    st.rerun()
-        elif mode == "signin":
-            with link_cols[1]:
-                if st.button("Sign Up", key="lnk_signup", type="secondary"):
-                    st.session_state["login_mode"] = "signup"
-                    st.rerun()
-            with link_cols[3]:
-                if st.button("Admin", key="lnk_admin2", type="secondary"):
-                    st.session_state["login_mode"] = "admin"
-                    st.rerun()
-        else:  # admin
-            with link_cols[2]:
-                if st.button("← Back to Sign In", key="lnk_back", type="secondary"):
-                    st.session_state["login_mode"] = "signin"
-                    st.rerun()
-
-        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-
-        # ── Main action button ────────────────────────────────────────────────
-        btn_label = {
-            "signup": "→ Create Account",
-            "signin": "→ Sign In",
-            "admin":  "→ Admin Login",
-        }[mode]
-
-        if st.button(btn_label, use_container_width=True, type="primary", key="auth_btn"):
-            email = email_input.strip()
-            pwd = password_input.strip()
-
-            if mode == "admin":
-                if pwd == os.environ.get("ADMIN_PASSWORD", "Admin@Study2025"):
-                    st.session_state.update({
-                        "username": "admin",
-                        "is_admin": True,
-                        "signed_in_expires": now + timedelta(hours=48),
+        # Handle OAuth Callback
+        if "code" in st.query_params:
+            try:
+                flow = google_drive_util.get_flow()
+                import json
+                if os.path.exists(".oauth_state.json"):
+                    with open(".oauth_state.json", "r") as f:
+                        data = json.load(f)
+                    if "code_verifier" in data:
+                        flow.code_verifier = data["code_verifier"]
+                        
+                flow.fetch_token(code=st.query_params["code"])
+                creds = flow.credentials
+                
+                # Fetch user email
+                session = flow.authorized_session()
+                user_info = session.get('https://www.googleapis.com/userinfo/v2/me').json()
+                email = user_info.get("email", "unknown_google_user")
+                
+                # Store in session state
+                st.session_state["google_creds"] = creds
+                st.session_state["username"] = email
+                st.session_state["is_admin"] = (email == "[EMAIL_ADDRESS]")
+                st.session_state["signed_in_expires"] = now + timedelta(hours=48)
+                
+                import pickle
+                with open("token.pickle", "wb") as token:
+                    pickle.dump({"creds": creds, "email": email}, token)
+                
+                # Register in firebase if new, or update last login
+                db = get_db()
+                existing = list(db.collection("users").where("email", "==", email).limit(1).stream())
+                if not existing:
+                    db.collection("users").add({
+                        "email": email,
+                        "created_at": datetime.utcnow().isoformat(),
+                        "last_login": datetime.utcnow().isoformat()
                     })
-                    st.success("✅ Signed in as Admin!")
-                    st.rerun()
                 else:
-                    st.error("❌ Invalid admin password.")
-
-            elif mode == "signup":
-                if not email or not pwd:
-                    st.warning("⚠️ Please fill in both fields.")
-                elif create_user(email, pwd):
-                    st.success("✅ Account created! Click **Sign In** below to log in.")
-                else:
-                    st.error("❌ An account with this email already exists.")
-
-            elif mode == "signin":
-                if not email or not pwd:
-                    st.warning("⚠️ Please fill in both fields.")
-                else:
-                    ok, user_email = authenticate_user(email, pwd)
-                    if ok:
-                        st.session_state.update({
-                            "username": user_email,
-                            "is_admin": (user_email == "admin"),
-                            "signed_in_expires": now + timedelta(hours=48),
-                        })
-                        st.success(f"✅ Welcome back, `{user_email}`!")
-                        st.rerun()
-                    else:
-                        st.error("❌ Invalid email or password.")
+                    existing[0].reference.update({"last_login": datetime.utcnow().isoformat()})
+                
+                st.query_params.clear()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Authentication failed: {e}")
+                
+        # Show Sign-in Button
+        st.markdown("<h4 style='text-align:center; color:#FF4103; margin-bottom:1rem;'>Sign in to Access Your Drive</h4>", unsafe_allow_html=True)
+        
+        try:
+            flow = google_drive_util.get_flow()
+            auth_url, state = flow.authorization_url(prompt='consent')
+            
+            import json
+            data = {}
+            if hasattr(flow, "code_verifier"):
+                data["code_verifier"] = flow.code_verifier
+            with open(".oauth_state.json", "w") as f:
+                json.dump(data, f)
+                
+            st.markdown(
+                f'<div style="text-align:center; margin-top:2rem;">'
+                f'<a href="{auth_url}" target="_self" style="text-decoration:none;">'
+                f'<button style="width:100%; border-radius:10px; padding:15px; background:linear-gradient(90deg, #FF4103, #ff6b3d); color:white; font-weight:bold; font-size:1.1rem; border:none; cursor:pointer; box-shadow: 0 4px 15px rgba(255, 65, 3, 0.4);">'
+                f'Sign in with Google</button></a></div>', 
+                unsafe_allow_html=True
+            )
+        except Exception as e:
+            st.error(f"Error initializing Google flow: {e}")
 
         st.markdown(
             "<p style='text-align:center; color:#94a3b8; font-size:0.78rem; margin-top:1.2rem;'>"
-            "🔒 Your data is stored securely in the cloud</p>",
+            "🔒 Your files never leave your Google Drive</p>",
             unsafe_allow_html=True,
         )
 
@@ -433,87 +446,109 @@ def main():
         layout="wide",
     )
 
-    # ── Global ice blue + light gray theme ────────────────────────────────────
+    # ── Global Custom Gradient Dark Theme ────────────────────────────────────
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
-    .stApp { background: #f0f7ff; }
+    /* Main background */
+    .stApp { 
+        background: linear-gradient(135deg, #FF4103 0%, #001621 100%) !important; 
+        color: #ffffff !important;
+    }
 
     /* Sidebar */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #e0f2fe, #f0f9ff) !important;
-        border-right: 1px solid #bae6fd;
+        background: rgba(0, 22, 33, 0.6) !important;
+        border-right: 1px solid rgba(255, 65, 3, 0.3);
     }
 
     /* Sidebar text */
-    [data-testid="stSidebar"] * { color: #1e3a5f !important; }
+    [data-testid="stSidebar"] * { color: #f8fafc !important; }
 
     /* Headings */
-    h1, h2, h3 { color: #0369a1 !important; }
+    h1, h2, h3 { color: #ffffff !important; text-shadow: 0px 2px 4px rgba(0,0,0,0.5); }
 
     /* Buttons */
     .stButton > button {
         border-radius: 10px;
-        border: 1.5px solid #bae6fd;
-        background: #ffffff;
-        color: #0ea5e9;
-        font-weight: 500;
+        border: 1.5px solid rgba(255, 65, 3, 0.5);
+        background: rgba(0, 22, 33, 0.8);
+        color: #FF4103;
+        font-weight: 600;
         transition: all 0.2s;
     }
     .stButton > button:hover {
-        background: #e0f2fe;
-        border-color: #0ea5e9;
-        color: #0284c7;
+        background: #FF4103;
+        border-color: #FF4103;
+        color: #ffffff;
     }
     .stButton > button[kind="primary"] {
-        background: linear-gradient(90deg, #0ea5e9, #38bdf8);
+        background: linear-gradient(90deg, #FF4103, #ff6b3d);
         color: white;
         border: none;
-        box-shadow: 0 4px 15px rgba(14,165,233,0.3);
+        box-shadow: 0 4px 15px rgba(255, 65, 3, 0.4);
     }
     .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(90deg, #0284c7, #0ea5e9);
+        background: linear-gradient(90deg, #ff6b3d, #FF4103);
         transform: translateY(-1px);
     }
 
     /* Input fields & Labels */
     [data-testid="stWidgetLabel"] p {
-        color: #0f172a !important;
+        color: #e2e8f0 !important;
         font-weight: 600 !important;
     }
     
     div[data-testid="stTextInput"] input,
     div[data-testid="stTextArea"] textarea {
-        background: #ffffff !important;
-        border: 1.5px solid #7dd3fc !important;
+        background: rgba(0, 22, 33, 0.7) !important;
+        border: 1.5px solid rgba(255, 65, 3, 0.4) !important;
         border-radius: 10px !important;
-        color: #000000 !important;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.04) !important;
+        color: #ffffff !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.2) !important;
     }
     div[data-testid="stTextInput"] input:focus,
     div[data-testid="stTextArea"] textarea:focus {
-        border-color: #0ea5e9 !important;
-        box-shadow: 0 0 0 3px rgba(14,165,233,0.15) !important;
-    }
+        border-color: #FF4103 !important;
+        box-shadow: 0 0 0 3px rgba(255, 65, 3, 0.25) !important;
     }
 
     /* Radio */
     div[role="radiogroup"] label {
-        color: #0ea5e9 !important;
+        color: #FF4103 !important;
     }
 
-    /* Expanders */
+    /* Expanders / Details */
     details summary {
-        background: #e0f2fe;
+        background: rgba(0, 22, 33, 0.8);
         border-radius: 8px;
         padding: 6px 12px;
-        color: #0369a1;
+        color: #FF4103;
+        border: 1px solid rgba(255, 65, 3, 0.5);
+    }
+    
+    /* Header Menu Bar */
+    [data-testid="stHeader"] {
+        background: rgba(0, 22, 33, 0.9) !important;
+        border-bottom: 1px solid rgba(255, 65, 3, 0.3);
+    }
+    
+    /* Chat Messages / Answers */
+    [data-testid="stChatMessage"] {
+        background: rgba(0, 22, 33, 0.7) !important;
+        border: 1px solid rgba(255, 65, 3, 0.2) !important;
+        border-radius: 12px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+    [data-testid="stChatMessage"] * {
+        color: #ffffff !important;
     }
 
     /* Info / success / warning boxes */
-    .stAlert { border-radius: 10px; }
+    .stAlert { border-radius: 10px; background: rgba(0, 22, 33, 0.8) !important; color: #ffffff !important; border: 1px solid rgba(255, 255, 255, 0.1); }
     </style>
     """, unsafe_allow_html=True)
 
@@ -524,8 +559,8 @@ def main():
     st.markdown("""
     <div style="text-align:center; padding: 1rem 0 2rem 0;">
       <div style="font-size:2.5rem; margin-bottom:0.2rem;">📚</div>
-      <div style="font-size:2.2rem; font-weight:700; color:#0369a1; letter-spacing:-0.5px;">Hey there! Ready to study?</div>
-      <div style="font-size:1.05rem; color:#64748b; margin-top:0.2rem;">Drop your PDFs or text files below and ask me anything about them.</div>
+      <div style="font-size:2.2rem; font-weight:700; color:#FF4103; letter-spacing:-0.5px; text-shadow: 0px 2px 4px rgba(0,0,0,0.5);">Hey there! Ready to study?</div>
+      <div style="font-size:1.05rem; color:#e2e8f0; margin-top:0.2rem;">Drop your PDFs or text files below and ask me anything about them.</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -536,13 +571,17 @@ def main():
         if st.session_state.get("is_admin"):
             st.markdown("*(Admin Mode)*")
         if st.button("Sign out"):
+            import os
+            if os.path.exists("token.pickle"):
+                os.remove("token.pickle")
             st.session_state.clear()
             st.rerun()
 
         st.markdown("---")
-        menu_options = ["New study session", "History"]
         if st.session_state.get("is_admin"):
-            menu_options.append("Manage GitHub")
+            menu_options = ["Admin Dashboard", "Manage GitHub"]
+        else:
+            menu_options = ["New study session", "History"]
 
         menu = st.radio(
             "Menu",
@@ -552,14 +591,18 @@ def main():
 
         st.markdown("---")
         
-        st.header("Upload & Index")
-        st.write(f"Study folder on disk: `{STUDY_DIR}`")
+        st.header("Upload & Index (Google Drive)")
+        st.write("Your files are synced to the `StudyAssistant_Files` folder on your Drive.")
+
+        service = google_drive_util.get_drive_service(st.session_state["google_creds"])
+        folder_id = google_drive_util.ensure_folder(service)
 
         existing_files = []
-        if os.path.exists(STUDY_DIR):
-            for fname in os.listdir(STUDY_DIR):
-                if fname.lower().endswith(".pdf") or fname.lower().endswith(".txt"):
-                    existing_files.append(fname)
+        try:
+            drive_files = google_drive_util.list_files(service, folder_id)
+            existing_files = [f.get('name') for f in drive_files if f.get('name') != 'index.pkl']
+        except Exception as e:
+            st.error(f"Failed to load files from Drive: {e}")
         
         selected_files = []
         if existing_files:
@@ -599,7 +642,7 @@ def main():
                         st.markdown('<div class="del-btn">', unsafe_allow_html=True)
                         if st.button("✕", key=f"del_{fname}", help=f"Remove {fname}"):
                             try:
-                                os.remove(os.path.join(STUDY_DIR, fname))
+                                google_drive_util.delete_file_by_name(service, folder_id, fname)
                             except Exception as e:
                                 st.error(f"Failed to delete {fname}: {e}")
                             st.rerun()
@@ -618,12 +661,10 @@ def main():
 
         if uploaded_files:
             new_files = False
-            for f in uploaded_files:
-                save_path = STUDY_DIR / f.name
-                if not os.path.exists(save_path):
+            with st.spinner("Uploading files to your Google Drive..."):
+                for f in uploaded_files:
                     try:
-                        with open(save_path, "wb") as out:
-                            out.write(f.getbuffer())
+                        google_drive_util.upload_file(service, folder_id, f.name, f.getbuffer())
                         record_upload(
                             filename=f.name,
                             original_name=f.name,
@@ -637,11 +678,27 @@ def main():
                 st.session_state["file_uploader_key"] += 1
                 st.rerun()
 
-        if st.button("Rebuild index from uploaded materials"):
-            with st.spinner("Building index from study materials..."):
+        if st.button("Analyze the materials"):
+            with st.spinner("Downloading files from Drive and building index..."):
                 try:
-                    ingest()
-                    st.success("Index rebuilt successfully.")
+                    import tempfile
+                    from pathlib import Path
+                    from rag_study_assistant import ingest
+                    
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        local_dir = Path(tmpdir)
+                        downloaded = google_drive_util.download_all_files(service, folder_id, str(local_dir))
+                        
+                        if not downloaded:
+                            st.warning("No files found to index. Please upload files first.")
+                        else:
+                            index_file_path = local_dir / "index.pkl"
+                            ingest(study_dir=local_dir, index_path=index_file_path)
+                            
+                            with open(index_file_path, "rb") as index_f:
+                                google_drive_util.upload_file(service, folder_id, "index.pkl", index_f.read())
+                                
+                            st.success("Index rebuilt and securely saved to your Google Drive!")
                 except Exception as e:
                     st.error(f"Error while ingesting study materials: {e}")
 
@@ -649,41 +706,71 @@ def main():
 
     # Main content area depends on selected menu
     if menu == "New study session":
-        st.subheader("New study session")
-        st.caption("Like 'New chat' in ChatGPT – ask a fresh question.")
+        col1, col2 = st.columns([0.8, 0.2])
+        with col1:
+            st.subheader("Study Chat")
+        with col2:
+            if st.button("Clear chat"):
+                st.session_state["messages"] = []
+                st.rerun()
 
-        if st.button("Clear question"):
-            if "question_input" in st.session_state:
-                st.session_state["question_input"] = ""
+        # Initialize chat history
+        if "messages" not in st.session_state:
+            st.session_state["messages"] = []
 
-        question = st.text_area(
-            "Your question",
-            key="question_input",
-            height=80,
-            placeholder="Type your question about the uploaded study materials...",
-        )
+        # Display chat messages from history on app rerun
+        for message in st.session_state["messages"]:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
 
-        if st.button("Get answer", type="primary") and question.strip():
-            with st.spinner("Retrieving relevant passages and generating answer..."):
-                try:
-                    allowed = st.session_state.get("selected_files", [])
-                    chunks = retrieve(question, k=5, allowed_sources=allowed)
-                    if not chunks:
-                        st.warning(
-                            "No relevant passages found in your study materials. "
-                            "Make sure you uploaded files and rebuilt the index."
-                        )
-                        return
+        # Accept user input
+        if question := st.chat_input("Write a message..."):
+            # Add user message to chat history
+            st.session_state["messages"].append({"role": "user", "content": question})
+            # Display user message in chat message container
+            with st.chat_message("user"):
+                st.markdown(question)
 
-                    answer = answer_question(question, chunks)
-                    # Save to history for current user
-                    save_history(st.session_state["username"], question, answer)
-                except Exception as e:
-                    st.error(f"Error while answering the question: {e}")
-                    return
-
-            st.markdown("---")
-            st.markdown(answer)
+            # Display assistant response in chat message container
+            with st.chat_message("assistant"):
+                with st.spinner("Retrieving relevant passages and thinking..."):
+                    try:
+                        allowed = st.session_state.get("selected_files", [])
+                        import tempfile
+                        from pathlib import Path
+                        from rag_study_assistant import retrieve, answer_question
+                        
+                        service = google_drive_util.get_drive_service(st.session_state["google_creds"])
+                        folder_id = google_drive_util.ensure_folder(service)
+                        index_bytes = google_drive_util.download_file_by_name(service, folder_id, "index.pkl")
+                        
+                        if not index_bytes:
+                            st.warning("AI Memory (index.pkl) not found in Google Drive! Please click 'Analyze the materials' in the sidebar first.")
+                            answer = "I don't have any study materials indexed yet. Please upload files and click 'Analyze the materials'."
+                            st.markdown(answer)
+                            st.session_state["messages"].append({"role": "assistant", "content": answer})
+                        else:
+                            with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tmp_idx:
+                                tmp_idx.write(index_bytes)
+                                tmp_idx_path = Path(tmp_idx.name)
+                                
+                            try:
+                                chunks = retrieve(question, k=5, allowed_sources=allowed, index_path=tmp_idx_path)
+                                if not chunks:
+                                    answer = "No relevant passages found in your study materials. Make sure you uploaded files and rebuilt the index."
+                                else:
+                                    answer = answer_question(question, chunks)
+                                    # Save to history for current user
+                                    save_history(st.session_state["username"], question, answer)
+                                st.markdown(answer)
+                                st.session_state["messages"].append({"role": "assistant", "content": answer})
+                            finally:
+                                import os
+                                os.remove(tmp_idx_path)
+                    except Exception as e:
+                        answer = f"Error while answering the question: {e}"
+                        st.error(answer)
+                        st.session_state["messages"].append({"role": "assistant", "content": answer})
 
     elif menu == "History":
         st.subheader("History")
@@ -747,6 +834,15 @@ def main():
                     st.error("Failed to sync with GitHub.")
                     with st.expander("Show Error Details"):
                         st.text(e.stderr or e.stdout)
+
+    elif menu == "Admin Dashboard" and st.session_state.get("is_admin"):
+        st.subheader("Admin Dashboard")
+        st.caption("Overview of registered users (Logins and Sign Ups).")
+        users = load_users()
+        if users:
+            st.dataframe(users, use_container_width=True)
+        else:
+            st.info("No users registered yet.")
 
 
 if __name__ == "__main__":

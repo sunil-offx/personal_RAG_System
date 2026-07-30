@@ -2,9 +2,13 @@ openai>=1.58.0
 sentence-transformers>=3.0.0
 numpy>=1.26.0
 scikit-learn>=1.4.0
-PyPDF2>=3.0.0
+PyMuPDF>=1.24.0
+pytesseract>=0.3.10
+Pillow>=10.0.0
 python-dotenv>=1.0.0
 streamlit>=1.35.0
 firebase-admin>=7.4.0
-extra-streamlit-components>=0.1.71  
- 
+extra-streamlit-components>=0.1.71
+google-api-python-client>=2.0.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.1.0
