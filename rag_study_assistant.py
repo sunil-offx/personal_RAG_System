@@ -68,8 +68,9 @@ def read_pdf(path: Path) -> List[Tuple[int, str]]:
         text = page.get_text().strip()
         if len(text) < 20: # Likely an image or scanned page
             try:
+                import io
                 pix = page.get_pixmap()
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
                 ocr_text = pytesseract.image_to_string(img)
                 text = text + "\n" + ocr_text.strip()
             except Exception as e:
