@@ -1,6 +1,6 @@
 import os
 import streamlit as st
-from supabase import create_client, Client
+from supabase import create_client, Client, ClientOptions
 
 def get_supabase() -> Client:
     # Use secrets if available, else environment variables
@@ -13,7 +13,7 @@ def get_supabase() -> Client:
         
     if not url or not key:
         raise ValueError("Missing Supabase credentials.")
-    return create_client(url, key)
+    return create_client(url, key, options=ClientOptions(storage_client_timeout=120, postgrest_client_timeout=120))
 
 def list_user_files(username: str):
     """List all files in the user's directory."""
@@ -44,7 +44,9 @@ def download_file(username: str, filename: str) -> bytes:
     try:
         res = client.storage.from_("study-materials").download(path)
         return res
-    except Exception:
+    except Exception as e:
+        import streamlit as st
+        st.error(f"Failed to download '{filename}': {e}")
         return None
 
 def delete_file(username: str, filename: str):
