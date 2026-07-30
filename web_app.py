@@ -657,7 +657,7 @@ def main():
                         if not downloaded:
                             st.warning("No files found to index! Please upload a file first.")
                         else:
-                            idx = ingest(str(local_dir))
+                            idx = ingest(local_dir)
                             with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as index_f:
                                 import pickle
                                 pickle.dump(idx, index_f)
