@@ -630,11 +630,11 @@ def main():
             with st.spinner("Uploading files to your secure storage..."):
                 for f in uploaded_files:
                     try:
-                        supabase_storage_util.upload_file(st.session_state["username"], f.name, f.getbuffer())
+                        supabase_storage_util.upload_file(st.session_state["username"], f.name, f.getvalue())
                         record_upload(
                             filename=f.name,
                             original_name=f.name,
-                            size_bytes=len(f.getbuffer()),
+                            size_bytes=len(f.getvalue()),
                         )
                         new_files = True
                     except Exception as e:
