@@ -727,13 +727,7 @@ def main():
 
     # Main content area depends on selected menu
     if menu == "New study session":
-        col1, col2 = st.columns([0.8, 0.2])
-        with col1:
-            st.subheader("Study Chat")
-        with col2:
-            if st.button("Clear chat"):
-                st.session_state["messages"] = []
-                st.rerun()
+        st.subheader("Study Chat")
 
         # Initialize chat history
         if "messages" not in st.session_state:
