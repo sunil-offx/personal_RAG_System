@@ -174,28 +174,6 @@ def set_pin(history_id: str, pinned: bool):
 def ensure_user_signed_in():
     """Centered login gate — Sign Up default, Sign In & Admin as links below."""
     now = datetime.utcnow()
-    
-    import pickle
-    import os
-    from google.auth.transport.requests import Request
-    from datetime import timedelta
-    if "username" not in st.session_state and os.path.exists("token.pickle"):
-        try:
-            with open("token.pickle", "rb") as token:
-                data = pickle.load(token)
-                creds = data.get("creds")
-                email = data.get("email")
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-                with open("token.pickle", "wb") as token:
-                    pickle.dump({"creds": creds, "email": email}, token)
-            if creds and creds.valid:
-                st.session_state["google_creds"] = creds
-                st.session_state["username"] = email
-                st.session_state["is_admin"] = False
-                st.session_state["signed_in_expires"] = now + timedelta(hours=48)
-        except Exception:
-            pass
 
     expires = st.session_state.get("signed_in_expires")
     if isinstance(expires, str):
@@ -386,10 +364,6 @@ def ensure_user_signed_in():
                 st.session_state["username"] = email
                 st.session_state["is_admin"] = (email == "[EMAIL_ADDRESS]")
                 st.session_state["signed_in_expires"] = now + timedelta(hours=48)
-                
-                import pickle
-                with open("token.pickle", "wb") as token:
-                    pickle.dump({"creds": creds, "email": email}, token)
                 
                 # Register in firebase if new, or update last login
                 db = get_db()
@@ -649,9 +623,6 @@ def main():
         if st.session_state.get("is_admin"):
             st.markdown("*(Admin Mode)*")
         if st.button("Sign out"):
-            import os
-            if os.path.exists("token.pickle"):
-                os.remove("token.pickle")
             st.session_state.clear()
             st.rerun()
 
