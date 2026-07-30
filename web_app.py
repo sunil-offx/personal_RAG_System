@@ -1,7 +1,8 @@
 import hashlib
 import os
 import json
-import google_drive_util
+import json
+import firebase_storage_util
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,9 +10,6 @@ load_dotenv()
 import streamlit as st
 
 if hasattr(st, "secrets"):
-    if "GOOGLE_CREDENTIALS" in st.secrets and not os.path.exists("google_credentials.json"):
-        with open("google_credentials.json", "w") as f:
-            f.write(st.secrets["GOOGLE_CREDENTIALS"])
     if "FIREBASE_KEY" in st.secrets and not os.path.exists("firebase_key.json"):
         with open("firebase_key.json", "w") as f:
             f.write(st.secrets["FIREBASE_KEY"])
@@ -54,7 +52,7 @@ def get_db():
         except Exception:
             key_path = os.environ.get("FIREBASE_KEY_PATH", "firebase_key.json")
             cred = credentials.Certificate(key_path)
-        firebase_admin.initialize_app(cred)
+        firebase_admin.initialize_app(cred, {"storageBucket": "rag-systems-bf084.appspot.com"})
     return firestore.client()
 
 
@@ -382,44 +380,18 @@ def ensure_user_signed_in():
             except Exception as e:
                 st.error(f"Authentication failed: {e}")
                 
-        # Show Sign-in Options
+        st.markdown("<h4 style='text-align:center; color:#FF4103; margin-bottom:1rem;'>Sign In</h4>", unsafe_allow_html=True)
+        
         tab1, tab2 = st.tabs(["Sign In", "Sign Up"])
         
         with tab1:
-            st.markdown("<h4 style='text-align:center; color:#FF4103; margin-bottom:1rem;'>Sign in to Access Your Drive</h4>", unsafe_allow_html=True)
-            
-            try:
-                flow = google_drive_util.get_flow()
-                auth_url, state = flow.authorization_url(prompt='select_account')
-                
-                import json
-                data = {}
-                if hasattr(flow, "code_verifier"):
-                    data["code_verifier"] = flow.code_verifier
-                with open(".oauth_state.json", "w") as f:
-                    json.dump(data, f)
-                    
-                st.markdown(
-                    f'<div style="text-align:center; margin-bottom:1.5rem;">'
-                    f'<a href="{auth_url}" target="_self" style="text-decoration:none;">'
-                    f'<button style="width:100%; border-radius:10px; padding:15px; background:linear-gradient(90deg, #FF4103, #ff6b3d); color:white; font-weight:bold; font-size:1.1rem; border:none; cursor:pointer; box-shadow: 0 4px 15px rgba(255, 65, 3, 0.4);">'
-                    f'Sign in with Google</button></a></div>', 
-                    unsafe_allow_html=True
-                )
-            except Exception as e:
-                st.error(f"Error initializing Google flow: {e}")
-
-            st.markdown("<hr style='margin:1rem 0;'>", unsafe_allow_html=True)
-            st.markdown("<p style='text-align:center; color:#64748b; font-size:0.9rem;'>Or sign in manually</p>", unsafe_allow_html=True)
-            
             with st.form("login_form"):
                 email_input = st.text_input("Email")
                 password_input = st.text_input("Password", type="password")
-                if st.form_submit_button("Sign In with Email"):
+                if st.form_submit_button("Sign In"):
                     success, user_email = authenticate_user(email_input, password_input)
                     if success:
                         st.session_state["username"] = user_email
-                        st.session_state["google_creds"] = None
                         st.session_state["is_admin"] = (user_email == "[EMAIL_ADDRESS]")
                         st.session_state["signed_in_expires"] = now + timedelta(hours=48)
                         st.rerun()
@@ -640,20 +612,13 @@ def main():
 
         st.markdown("---")
         
-        st.header("Upload & Index (Google Drive)")
-        st.write("Your files are synced to the `StudyAssistant_Files` folder on your Drive.")
+        st.header("Upload & Index (Firebase Storage)")
+        st.write("Your files are securely saved to your personal cloud folder.")
 
-        if st.session_state.get("google_creds"):
-            service = google_drive_util.get_drive_service(st.session_state["google_creds"])
-            folder_id = google_drive_util.ensure_folder(service)
-    
-            try:
-                drive_files = google_drive_util.list_files(service, folder_id)
-                existing_files = [f.get('name') for f in drive_files if f.get('name') != 'index.pkl']
-            except Exception as e:
-                st.error(f"Failed to load files from Drive: {e}")
-        else:
-            st.warning("⚠️ You are signed in manually without Google Drive access. To upload and index files, please sign out and sign back in using Google.")
+        try:
+            existing_files = firebase_storage_util.list_user_files(st.session_state["username"])
+        except Exception as e:
+            st.error(f"Failed to load files from Storage: {e}")
             existing_files = []
         
         selected_files = []
@@ -694,7 +659,7 @@ def main():
                         st.markdown('<div class="del-btn">', unsafe_allow_html=True)
                         if st.button("✕", key=f"del_{fname}", help=f"Remove {fname}"):
                             try:
-                                google_drive_util.delete_file_by_name(service, folder_id, fname)
+                                firebase_storage_util.delete_file(st.session_state["username"], fname)
                             except Exception as e:
                                 st.error(f"Failed to delete {fname}: {e}")
                             st.rerun()
@@ -713,10 +678,10 @@ def main():
 
         if uploaded_files:
             new_files = False
-            with st.spinner("Uploading files to your Google Drive..."):
+            with st.spinner("Uploading files to your secure storage..."):
                 for f in uploaded_files:
                     try:
-                        google_drive_util.upload_file(service, folder_id, f.name, f.getbuffer())
+                        firebase_storage_util.upload_file(st.session_state["username"], f.name, f.getbuffer())
                         record_upload(
                             filename=f.name,
                             original_name=f.name,
@@ -731,28 +696,28 @@ def main():
                 st.rerun()
 
         if st.button("Analyze the materials"):
-            with st.spinner("Downloading files from Drive and building index..."):
+            with st.spinner("Downloading files from Cloud and building index..."):
                 try:
                     import tempfile
                     from pathlib import Path
                     from rag_study_assistant import ingest
                     
                     with tempfile.TemporaryDirectory() as tmpdir:
-                        local_dir = Path(tmpdir)
-                        downloaded = google_drive_util.download_all_files(service, folder_id, str(local_dir))
-                        
+                        local_dir = Path(tmpdir) / "docs"
+                        downloaded = firebase_storage_util.download_all_user_files(st.session_state["username"], str(local_dir))
                         if not downloaded:
-                            st.warning("No files found to index. Please upload files first.")
+                            st.warning("No files found to index! Please upload a file first.")
                         else:
-                            index_file_path = local_dir / "index.pkl"
-                            ingest(study_dir=local_dir, index_path=index_file_path)
-                            
-                            with open(index_file_path, "rb") as index_f:
-                                google_drive_util.upload_file(service, folder_id, "index.pkl", index_f.read())
-                                
-                            st.success("Index rebuilt and securely saved to your Google Drive!")
+                            idx = ingest(str(local_dir))
+                            with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as index_f:
+                                import pickle
+                                pickle.dump(idx, index_f)
+                                index_f.flush()
+                                index_f.seek(0)
+                                firebase_storage_util.upload_file(st.session_state["username"], "index.pkl", index_f.read())
+                            st.success("Successfully built AI memory index!")
                 except Exception as e:
-                    st.error(f"Error while ingesting study materials: {e}")
+                    st.error(f"Error during indexing: {e}")
 
 
 
@@ -786,16 +751,11 @@ def main():
                         from pathlib import Path
                         from rag_study_assistant import retrieve, answer_question
                         
-                        if st.session_state.get("google_creds"):
-                            service = google_drive_util.get_drive_service(st.session_state["google_creds"])
-                            folder_id = google_drive_util.ensure_folder(service)
-                            index_bytes = google_drive_util.download_file_by_name(service, folder_id, "index.pkl")
-                        else:
-                            index_bytes = None
+                        index_bytes = firebase_storage_util.download_file(st.session_state["username"], "index.pkl")
                         
                         if not index_bytes:
-                            st.warning("AI Memory (index.pkl) not found. If you logged in manually, you do not have Google Drive access to study materials.")
-                            answer = "I don't have any study materials indexed yet. Please upload files and click 'Analyze the materials' using a Google account."
+                            st.warning("AI Memory (index.pkl) not found. Please upload files and click 'Analyze the materials'.")
+                            answer = "I don't have any study materials indexed yet. Please upload files and click 'Analyze the materials'."
                             st.markdown(answer)
                             st.session_state["messages"].append({"role": "assistant", "content": answer})
                         else:
