@@ -562,8 +562,12 @@ def main():
 
     /* Transparent Chat Input Container Background */
     [data-testid="stBottomBlockContainer"],
+    [data-testid="stBottomBlockContainer"] > div,
     [data-testid="stBottom"],
-    .stChatFloatingInputContainer {
+    [data-testid="stBottom"] > div,
+    .stChatFloatingInputContainer,
+    .stChatFloatingInputContainer > div {
+        background-color: transparent !important;
         background: transparent !important;
     }
     </style>
