@@ -2,7 +2,7 @@ import hashlib
 import os
 import json
 import json
-import firebase_storage_util
+import supabase_storage_util
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -561,11 +561,11 @@ def main():
 
         st.markdown("---")
         
-        st.header("Upload & Index (Firebase Storage)")
+        st.header("Upload & Index (Supabase Storage)")
         st.write("Your files are securely saved to your personal cloud folder.")
 
         try:
-            existing_files = firebase_storage_util.list_user_files(st.session_state["username"])
+            existing_files = supabase_storage_util.list_user_files(st.session_state["username"])
         except Exception as e:
             st.error(f"Failed to load files from Storage: {e}")
             existing_files = []
@@ -608,7 +608,7 @@ def main():
                         st.markdown('<div class="del-btn">', unsafe_allow_html=True)
                         if st.button("✕", key=f"del_{fname}", help=f"Remove {fname}"):
                             try:
-                                firebase_storage_util.delete_file(st.session_state["username"], fname)
+                                supabase_storage_util.delete_file(st.session_state["username"], fname)
                             except Exception as e:
                                 st.error(f"Failed to delete {fname}: {e}")
                             st.rerun()
@@ -630,7 +630,7 @@ def main():
             with st.spinner("Uploading files to your secure storage..."):
                 for f in uploaded_files:
                     try:
-                        firebase_storage_util.upload_file(st.session_state["username"], f.name, f.getbuffer())
+                        supabase_storage_util.upload_file(st.session_state["username"], f.name, f.getbuffer())
                         record_upload(
                             filename=f.name,
                             original_name=f.name,
@@ -653,7 +653,7 @@ def main():
                     
                     with tempfile.TemporaryDirectory() as tmpdir:
                         local_dir = Path(tmpdir) / "docs"
-                        downloaded = firebase_storage_util.download_all_user_files(st.session_state["username"], str(local_dir))
+                        downloaded = supabase_storage_util.download_all_user_files(st.session_state["username"], str(local_dir))
                         if not downloaded:
                             st.warning("No files found to index! Please upload a file first.")
                         else:
@@ -663,7 +663,7 @@ def main():
                                 pickle.dump(idx, index_f)
                                 index_f.flush()
                                 index_f.seek(0)
-                                firebase_storage_util.upload_file(st.session_state["username"], "index.pkl", index_f.read())
+                                supabase_storage_util.upload_file(st.session_state["username"], "index.pkl", index_f.read())
                             st.success("Successfully built AI memory index!")
                 except Exception as e:
                     st.error(f"Error during indexing: {e}")
@@ -700,7 +700,7 @@ def main():
                         from pathlib import Path
                         from rag_study_assistant import retrieve, answer_question
                         
-                        index_bytes = firebase_storage_util.download_file(st.session_state["username"], "index.pkl")
+                        index_bytes = supabase_storage_util.download_file(st.session_state["username"], "index.pkl")
                         
                         if not index_bytes:
                             st.warning("AI Memory (index.pkl) not found. Please upload files and click 'Analyze the materials'.")
