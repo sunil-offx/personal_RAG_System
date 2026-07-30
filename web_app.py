@@ -6,6 +6,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import streamlit as st
+
+if hasattr(st, "secrets"):
+    if "GOOGLE_CREDENTIALS" in st.secrets and not os.path.exists("google_credentials.json"):
+        with open("google_credentials.json", "w") as f:
+            f.write(st.secrets["GOOGLE_CREDENTIALS"])
+    if "FIREBASE_KEY" in st.secrets and not os.path.exists("firebase_key.json"):
+        with open("firebase_key.json", "w") as f:
+            f.write(st.secrets["FIREBASE_KEY"])
+
 import subprocess
 from datetime import datetime, timedelta
 
