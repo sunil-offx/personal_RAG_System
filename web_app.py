@@ -545,16 +545,37 @@ def main():
         border-bottom: 1px solid rgba(255, 65, 3, 0.3);
     }
     
-    /* Chat Messages / Answers */
+    /* Base Chat Message */
     [data-testid="stChatMessage"] {
-        background: rgba(0, 22, 33, 0.7) !important;
-        border: 1px solid rgba(255, 65, 3, 0.2) !important;
         border-radius: 12px;
         padding: 1rem;
         margin-bottom: 1rem;
+        width: fit-content;
+        max-width: 85%;
+        display: flex;
     }
     [data-testid="stChatMessage"] * {
         color: #ffffff !important;
+    }
+    
+    /* User Message (Right aligned) */
+    [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
+        background: rgba(255, 65, 3, 0.15) !important;
+        border: 1px solid rgba(255, 65, 3, 0.4) !important;
+        flex-direction: row-reverse;
+        margin-left: auto;
+        border-bottom-right-radius: 0;
+    }
+    [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stMarkdownContainer"] {
+        text-align: right;
+    }
+
+    /* AI Message (Left aligned) */
+    [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
+        background: rgba(0, 22, 33, 0.7) !important;
+        border: 1px solid rgba(255, 65, 3, 0.2) !important;
+        margin-right: auto;
+        border-bottom-left-radius: 0;
     }
 
     /* Info / success / warning boxes */
