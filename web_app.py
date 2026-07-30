@@ -408,33 +408,70 @@ def ensure_user_signed_in():
             except Exception as e:
                 st.error(f"Authentication failed: {e}")
                 
-        # Show Sign-in Button
-        st.markdown("<h4 style='text-align:center; color:#FF4103; margin-bottom:1rem;'>Sign in to Access Your Drive</h4>", unsafe_allow_html=True)
+        # Show Sign-in Options
+        tab1, tab2 = st.tabs(["Sign In", "Sign Up"])
         
-        try:
-            flow = google_drive_util.get_flow()
-            auth_url, state = flow.authorization_url(prompt='consent')
+        with tab1:
+            st.markdown("<h4 style='text-align:center; color:#FF4103; margin-bottom:1rem;'>Sign in to Access Your Drive</h4>", unsafe_allow_html=True)
             
-            import json
-            data = {}
-            if hasattr(flow, "code_verifier"):
-                data["code_verifier"] = flow.code_verifier
-            with open(".oauth_state.json", "w") as f:
-                json.dump(data, f)
+            try:
+                flow = google_drive_util.get_flow()
+                auth_url, state = flow.authorization_url(prompt='consent')
                 
-            st.markdown(
-                f'<div style="text-align:center; margin-top:2rem;">'
-                f'<a href="{auth_url}" target="_self" style="text-decoration:none;">'
-                f'<button style="width:100%; border-radius:10px; padding:15px; background:linear-gradient(90deg, #FF4103, #ff6b3d); color:white; font-weight:bold; font-size:1.1rem; border:none; cursor:pointer; box-shadow: 0 4px 15px rgba(255, 65, 3, 0.4);">'
-                f'Sign in with Google</button></a></div>', 
-                unsafe_allow_html=True
-            )
-        except Exception as e:
-            st.error(f"Error initializing Google flow: {e}")
+                import json
+                data = {}
+                if hasattr(flow, "code_verifier"):
+                    data["code_verifier"] = flow.code_verifier
+                with open(".oauth_state.json", "w") as f:
+                    json.dump(data, f)
+                    
+                st.markdown(
+                    f'<div style="text-align:center; margin-bottom:1.5rem;">'
+                    f'<a href="{auth_url}" target="_self" style="text-decoration:none;">'
+                    f'<button style="width:100%; border-radius:10px; padding:15px; background:linear-gradient(90deg, #FF4103, #ff6b3d); color:white; font-weight:bold; font-size:1.1rem; border:none; cursor:pointer; box-shadow: 0 4px 15px rgba(255, 65, 3, 0.4);">'
+                    f'Sign in with Google</button></a></div>', 
+                    unsafe_allow_html=True
+                )
+            except Exception as e:
+                st.error(f"Error initializing Google flow: {e}")
+
+            st.markdown("<hr style='margin:1rem 0;'>", unsafe_allow_html=True)
+            st.markdown("<p style='text-align:center; color:#64748b; font-size:0.9rem;'>Or sign in manually</p>", unsafe_allow_html=True)
+            
+            with st.form("login_form"):
+                email_input = st.text_input("Email")
+                password_input = st.text_input("Password", type="password")
+                if st.form_submit_button("Sign In with Email"):
+                    success, user_email = authenticate_user(email_input, password_input)
+                    if success:
+                        st.session_state["username"] = user_email
+                        st.session_state["google_creds"] = None
+                        st.session_state["is_admin"] = (user_email == "[EMAIL_ADDRESS]")
+                        st.session_state["signed_in_expires"] = now + timedelta(hours=48)
+                        st.rerun()
+                    else:
+                        st.error("Invalid email or password.")
+                        
+        with tab2:
+            st.markdown("<h4 style='text-align:center; color:#0ea5e9; margin-bottom:1rem;'>Create an Account</h4>", unsafe_allow_html=True)
+            with st.form("signup_form"):
+                new_email = st.text_input("Email")
+                new_password = st.text_input("Password", type="password")
+                confirm_password = st.text_input("Confirm Password", type="password")
+                if st.form_submit_button("Sign Up"):
+                    if new_password != confirm_password:
+                        st.error("Passwords do not match!")
+                    elif len(new_password) < 6:
+                        st.error("Password must be at least 6 characters.")
+                    else:
+                        if create_user(new_email, new_password):
+                            st.success("Account created successfully! You can now sign in on the 'Sign In' tab.")
+                        else:
+                            st.error("An account with that email already exists.")
 
         st.markdown(
             "<p style='text-align:center; color:#94a3b8; font-size:0.78rem; margin-top:1.2rem;'>"
-            "🔒 Your files never leave your Google Drive</p>",
+            "🔒 Google Drive file upload requires signing in with Google.</p>",
             unsafe_allow_html=True,
         )
 
@@ -635,15 +672,18 @@ def main():
         st.header("Upload & Index (Google Drive)")
         st.write("Your files are synced to the `StudyAssistant_Files` folder on your Drive.")
 
-        service = google_drive_util.get_drive_service(st.session_state["google_creds"])
-        folder_id = google_drive_util.ensure_folder(service)
-
-        existing_files = []
-        try:
-            drive_files = google_drive_util.list_files(service, folder_id)
-            existing_files = [f.get('name') for f in drive_files if f.get('name') != 'index.pkl']
-        except Exception as e:
-            st.error(f"Failed to load files from Drive: {e}")
+        if st.session_state.get("google_creds"):
+            service = google_drive_util.get_drive_service(st.session_state["google_creds"])
+            folder_id = google_drive_util.ensure_folder(service)
+    
+            try:
+                drive_files = google_drive_util.list_files(service, folder_id)
+                existing_files = [f.get('name') for f in drive_files if f.get('name') != 'index.pkl']
+            except Exception as e:
+                st.error(f"Failed to load files from Drive: {e}")
+        else:
+            st.warning("⚠️ You are signed in manually without Google Drive access. To upload and index files, please sign out and sign back in using Google.")
+            existing_files = []
         
         selected_files = []
         if existing_files:
@@ -775,13 +815,16 @@ def main():
                         from pathlib import Path
                         from rag_study_assistant import retrieve, answer_question
                         
-                        service = google_drive_util.get_drive_service(st.session_state["google_creds"])
-                        folder_id = google_drive_util.ensure_folder(service)
-                        index_bytes = google_drive_util.download_file_by_name(service, folder_id, "index.pkl")
+                        if st.session_state.get("google_creds"):
+                            service = google_drive_util.get_drive_service(st.session_state["google_creds"])
+                            folder_id = google_drive_util.ensure_folder(service)
+                            index_bytes = google_drive_util.download_file_by_name(service, folder_id, "index.pkl")
+                        else:
+                            index_bytes = None
                         
                         if not index_bytes:
-                            st.warning("AI Memory (index.pkl) not found in Google Drive! Please click 'Analyze the materials' in the sidebar first.")
-                            answer = "I don't have any study materials indexed yet. Please upload files and click 'Analyze the materials'."
+                            st.warning("AI Memory (index.pkl) not found. If you logged in manually, you do not have Google Drive access to study materials.")
+                            answer = "I don't have any study materials indexed yet. Please upload files and click 'Analyze the materials' using a Google account."
                             st.markdown(answer)
                             st.session_state["messages"].append({"role": "assistant", "content": answer})
                         else:
