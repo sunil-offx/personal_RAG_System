@@ -547,35 +547,34 @@ def main():
     
     /* Base Chat Message */
     [data-testid="stChatMessage"] {
-        border-radius: 12px;
-        padding: 1rem;
+        padding: 0.8rem 1rem;
         margin-bottom: 1rem;
         width: fit-content;
-        max-width: 85%;
+        max-width: 80%;
         display: flex;
+        gap: 0.5rem;
     }
     [data-testid="stChatMessage"] * {
         color: #ffffff !important;
     }
     
-    /* User Message (Right aligned) */
+    /* User Message (Right aligned, dark bubble, no avatar) */
     [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
-        background: rgba(255, 65, 3, 0.15) !important;
-        border: 1px solid rgba(255, 65, 3, 0.4) !important;
-        flex-direction: row-reverse;
+        background: #252529 !important; /* dark grey bubble */
+        border-radius: 20px;
         margin-left: auto;
-        border-bottom-right-radius: 0;
     }
-    [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stMarkdownContainer"] {
-        text-align: right;
+    /* Hide user avatar */
+    [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) > div:first-child {
+        display: none !important;
     }
 
-    /* AI Message (Left aligned) */
+    /* AI Message (Left aligned, transparent background) */
     [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
-        background: rgba(0, 22, 33, 0.7) !important;
-        border: 1px solid rgba(255, 65, 3, 0.2) !important;
+        background: transparent !important;
+        border: none !important;
         margin-right: auto;
-        border-bottom-left-radius: 0;
+        padding-left: 0;
     }
 
     /* Info / success / warning boxes */
