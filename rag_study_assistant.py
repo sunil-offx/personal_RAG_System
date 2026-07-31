@@ -57,7 +57,6 @@ def read_txt(path: Path) -> str:
 
 
 def read_pdf(path: Path) -> List[Tuple[int, str]]:
-    nest_asyncio.apply()
     
     api_key = os.environ.get("LLAMA_CLOUD_API_KEY")
     try:
