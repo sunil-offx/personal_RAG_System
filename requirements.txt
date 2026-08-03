@@ -12,4 +12,7 @@ supabase>=2.3.0
 anyio<4.0.0
 nest_asyncio
 torchvision
-fpdf2
+fpdf2
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
