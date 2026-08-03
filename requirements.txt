@@ -9,4 +9,7 @@ streamlit>=1.35.0
 firebase-admin>=7.4.0
 extra-streamlit-components>=0.1.71
 supabase>=2.3.0
-anyio<4.0.0
+anyio<4.0.0
+nest_asyncio
+torchvision
+fpdf2
