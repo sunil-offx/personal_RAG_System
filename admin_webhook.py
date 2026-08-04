@@ -5,33 +5,41 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+import secrets
+
 app = FastAPI(title="Admin Webhook Service")
 
-# Setup a simple API key security for the webhook
-API_KEY = os.environ.get("ADMIN_WEBHOOK_SECRET", "super-secret-default-key")
-api_key_header = APIKeyHeader(name="X-Admin-Token", auto_error=True)
+# Setup HTTP Basic Auth using email and password from .env
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "myadminsecret")
+security = HTTPBasic()
 
-async def get_api_key(api_key: str = Security(api_key_header)):
-    if api_key != API_KEY:
+def get_current_admin(credentials: HTTPBasicCredentials = Security(security)):
+    is_correct_username = secrets.compare_digest(credentials.username, ADMIN_EMAIL)
+    is_correct_password = secrets.compare_digest(credentials.password, ADMIN_PASSWORD)
+    if not (is_correct_username and is_correct_password):
         raise HTTPException(
             status_code=403, 
             detail="Could not validate credentials"
         )
-    return api_key
+    return credentials.username
+
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
+
+class WebhookPayload(BaseModel):
+    action: str
+    email: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
 
 @app.post("/admin/webhook")
-async def process_admin_webhook(request: Request, api_key: str = Security(get_api_key)):
+async def process_admin_webhook(payload: WebhookPayload, username: str = Security(get_current_admin)):
     """
     Generic webhook endpoint for admin tasks.
-    Send a POST request with the header: X-Admin-Token: <your-secret>
+    Send a POST request with HTTP Basic Auth (email and password).
     """
-    try:
-        # Parse the JSON payload
-        payload = await request.json()
-    except Exception:
-        payload = {}
-        
-    action = payload.get("action")
+    action = payload.action
     
     # Example logic based on action type
     if action == "rebuild_index":
@@ -39,7 +47,7 @@ async def process_admin_webhook(request: Request, api_key: str = Security(get_ap
         return {"status": "success", "message": "Index rebuild triggered"}
         
     elif action == "delete_user":
-        user_email = payload.get("email")
+        user_email = payload.email
         if not user_email:
             raise HTTPException(status_code=400, detail="Missing email for deletion")
         # Call your delete user logic here
@@ -49,7 +57,7 @@ async def process_admin_webhook(request: Request, api_key: str = Security(get_ap
         return {
             "status": "success", 
             "message": "Webhook received, but no specific action was matched.",
-            "payload_received": payload
+            "payload_received": payload.model_dump()
         }
 
 if __name__ == "__main__":
