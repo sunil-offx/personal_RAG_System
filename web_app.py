@@ -1,7 +1,6 @@
 import hashlib
 import os
 import json
-import google_drive_util
 import tempfile
 import base64
 from dotenv import load_dotenv
@@ -175,28 +174,6 @@ def ensure_user_signed_in():
     """Centered login gate — Sign Up default, Sign In & Admin as links below."""
     now = datetime.utcnow()
     
-    import pickle
-    import os
-    from google.auth.transport.requests import Request
-    from datetime import timedelta
-    if "username" not in st.session_state and os.path.exists("token.pickle"):
-        try:
-            with open("token.pickle", "rb") as token:
-                data = pickle.load(token)
-                creds = data.get("creds")
-                email = data.get("email")
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-                with open("token.pickle", "wb") as token:
-                    pickle.dump({"creds": creds, "email": email}, token)
-            if creds and creds.valid:
-                st.session_state["google_creds"] = creds
-                st.session_state["username"] = email
-                st.session_state["is_admin"] = False
-                st.session_state["signed_in_expires"] = now + timedelta(hours=48)
-        except Exception:
-            pass
-
     expires = st.session_state.get("signed_in_expires")
     if isinstance(expires, str):
         try:
@@ -350,95 +327,56 @@ def ensure_user_signed_in():
     # ── Centered form ─────────────────────────────────────────────────────────
     _, col, _ = st.columns([1, 2, 1])
     with col:
-
-        import google_drive_util
-        import importlib
-        importlib.reload(google_drive_util)
-        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-        
-        # Check for credentials
-        if not os.path.exists("google_credentials.json"):
-            if hasattr(st, "secrets") and "GOOGLE_CREDENTIALS" in st.secrets:
-                with open("google_credentials.json", "w") as f:
-                    f.write(st.secrets["GOOGLE_CREDENTIALS"])
+        with st.form("auth_form", clear_on_submit=False):
+            if mode == "signup":
+                st.markdown("<h4 style='text-align:center; color:#334155; margin-bottom:1rem;'>Create an Account</h4>", unsafe_allow_html=True)
+                email = st.text_input("Email", placeholder="you@example.com")
+                password = st.text_input("Password", type="password", placeholder="••••••••")
+                submitted = st.form_submit_button("Sign Up", use_container_width=True, type="primary")
+                if submitted:
+                    if not email or not password:
+                        st.error("Please enter email and password.")
+                    else:
+                        success = create_user(email, password)
+                        if success:
+                            st.success("Account created! You can now log in.")
+                            st.session_state["login_mode"] = "signin"
+                            st.rerun()
+                        else:
+                            st.error("Account already exists or error occurred.")
             else:
-                st.error("Missing `google_credentials.json`!")
-                st.warning("Please create a Google Cloud Project, enable the Drive API, and download your OAuth client secrets to `google_credentials.json` in this folder.")
-                st.stop()
+                st.markdown("<h4 style='text-align:center; color:#334155; margin-bottom:1rem;'>Welcome Back</h4>", unsafe_allow_html=True)
+                email = st.text_input("Email", placeholder="you@example.com")
+                password = st.text_input("Password", type="password", placeholder="••••••••")
+                submitted = st.form_submit_button("Sign In", use_container_width=True, type="primary")
+                if submitted:
+                    if not email or not password:
+                        st.error("Please enter email and password.")
+                    else:
+                        success, user_email = authenticate_user(email, password)
+                        if success:
+                            st.session_state["username"] = user_email
+                            st.session_state["is_admin"] = (user_email == "admin")
+                            st.session_state["signed_in_expires"] = now + timedelta(hours=48)
+                            st.rerun()
+                        else:
+                            st.error("Invalid credentials.")
 
-        # Handle OAuth Callback
-        if "code" in st.query_params:
-            try:
-                flow = google_drive_util.get_flow()
-                import json
-                if os.path.exists(".oauth_state.json"):
-                    with open(".oauth_state.json", "r") as f:
-                        data = json.load(f)
-                    if "code_verifier" in data:
-                        flow.code_verifier = data["code_verifier"]
-                        
-                flow.fetch_token(code=st.query_params["code"])
-                creds = flow.credentials
-                
-                # Fetch user email
-                session = flow.authorized_session()
-                user_info = session.get('https://www.googleapis.com/userinfo/v2/me').json()
-                email = user_info.get("email", "unknown_google_user")
-                
-                # Store in session state
-                st.session_state["google_creds"] = creds
-                st.session_state["username"] = email
-                st.session_state["is_admin"] = (email == "[EMAIL_ADDRESS]")
-                st.session_state["signed_in_expires"] = now + timedelta(hours=48)
-                
-                import pickle
-                with open("token.pickle", "wb") as token:
-                    pickle.dump({"creds": creds, "email": email}, token)
-                
-                # Register in firebase if new, or update last login
-                db = get_db()
-                existing = list(db.collection("users").where("email", "==", email).limit(1).stream())
-                if not existing:
-                    db.collection("users").add({
-                        "email": email,
-                        "created_at": datetime.utcnow().isoformat(),
-                        "last_login": datetime.utcnow().isoformat()
-                    })
-                else:
-                    existing[0].reference.update({"last_login": datetime.utcnow().isoformat()})
-                
-                st.query_params.clear()
-                st.rerun()
-            except Exception as e:
-                st.error(f"Authentication failed: {e}")
-                
-        # Show Sign-in Button
-        st.markdown("<h4 style='text-align:center; color:#FF4103; margin-bottom:1rem;'>Sign in to Access Your Drive</h4>", unsafe_allow_html=True)
-        
-        try:
-            flow = google_drive_util.get_flow()
-            auth_url, state = flow.authorization_url(prompt='consent')
-            
-            import json
-            data = {}
-            if hasattr(flow, "code_verifier"):
-                data["code_verifier"] = flow.code_verifier
-            with open(".oauth_state.json", "w") as f:
-                json.dump(data, f)
-                
-            st.markdown(
-                f'<div style="text-align:center; margin-top:2rem;">'
-                f'<a href="{auth_url}" target="_self" style="text-decoration:none;">'
-                f'<button style="width:100%; border-radius:10px; padding:15px; background:linear-gradient(90deg, #FF4103, #ff6b3d); color:white; font-weight:bold; font-size:1.1rem; border:none; cursor:pointer; box-shadow: 0 4px 15px rgba(255, 65, 3, 0.4);">'
-                f'Sign in with Google</button></a></div>', 
-                unsafe_allow_html=True
-            )
-        except Exception as e:
-            st.error(f"Error initializing Google flow: {e}")
-
+        # Links below the form
+        c1, c2 = st.columns(2)
+        with c1:
+            if mode == "signup":
+                if st.form_submit_button("Already have an account? Sign In", key="go_signin"):
+                    st.session_state["login_mode"] = "signin"
+                    st.rerun()
+            else:
+                if st.form_submit_button("Need an account? Sign Up", key="go_signup"):
+                    st.session_state["login_mode"] = "signup"
+                    st.rerun()
+                    
         st.markdown(
             "<p style='text-align:center; color:#94a3b8; font-size:0.78rem; margin-top:1.2rem;'>"
-            "🔒 Your files never leave your Google Drive</p>",
+            "🔒 Your files are securely stored</p>",
             unsafe_allow_html=True,
         )
 
@@ -611,18 +549,17 @@ def main():
 
         st.markdown("---")
         
-        st.header("Upload & Index (Google Drive)")
-        st.write("Your files are synced to the `StudyAssistant_Files` folder on your Drive.")
+        st.header("Upload & Index (Supabase)")
+        st.write("Your files are synced securely to your cloud storage.")
+        
+        import supabase_storage_util
 
-        service = google_drive_util.get_drive_service(st.session_state["google_creds"])
-        folder_id = google_drive_util.ensure_folder(service)
-
+        username = st.session_state.get('username')
         existing_files = []
         try:
-            drive_files = google_drive_util.list_files(service, folder_id)
-            existing_files = [f.get('name') for f in drive_files if f.get('name') != 'index.pkl']
+            existing_files = supabase_storage_util.list_user_files(username)
         except Exception as e:
-            st.error(f"Failed to load files from Drive: {e}")
+            st.error(f"Failed to load files from Supabase: {e}")
         
         selected_files = []
         if existing_files:
@@ -662,7 +599,7 @@ def main():
                         st.markdown('<div class="del-btn">', unsafe_allow_html=True)
                         if st.button("✕", key=f"del_{fname}", help=f"Remove {fname}"):
                             try:
-                                google_drive_util.delete_file_by_name(service, folder_id, fname)
+                                supabase_storage_util.delete_file(username, fname)
                             except Exception as e:
                                 st.error(f"Failed to delete {fname}: {e}")
                             st.rerun()
@@ -681,10 +618,10 @@ def main():
 
         if uploaded_files:
             new_files = False
-            with st.spinner("Uploading files to your Google Drive..."):
+            with st.spinner("Uploading files to your cloud storage..."):
                 for f in uploaded_files:
                     try:
-                        google_drive_util.upload_file(service, folder_id, f.name, f.getbuffer())
+                        supabase_storage_util.upload_file(username, f.name, f.getbuffer())
                         record_upload(
                             filename=f.name,
                             original_name=f.name,
@@ -707,7 +644,7 @@ def main():
                     
                     with tempfile.TemporaryDirectory() as tmpdir:
                         local_dir = Path(tmpdir)
-                        downloaded = google_drive_util.download_all_files(service, folder_id, str(local_dir))
+                        downloaded = supabase_storage_util.download_all_user_files(username, str(local_dir))
                         
                         if not downloaded:
                             st.warning("No files found to index. Please upload files first.")
@@ -716,9 +653,9 @@ def main():
                             ingest(study_dir=local_dir, index_path=index_file_path)
                             
                             with open(index_file_path, "rb") as index_f:
-                                google_drive_util.upload_file(service, folder_id, "index.pkl", index_f.read())
+                                supabase_storage_util.upload_file(username, "index.pkl", index_f.read())
                                 
-                            st.success("Index rebuilt and securely saved to your Google Drive!")
+                            st.success("Index rebuilt and securely saved to your cloud storage!")
                 except Exception as e:
                     st.error(f"Error while ingesting study materials: {e}")
 
@@ -780,12 +717,12 @@ def main():
                         from pathlib import Path
                         from rag_study_assistant import retrieve, answer_question
                         
-                        service = google_drive_util.get_drive_service(st.session_state["google_creds"])
-                        folder_id = google_drive_util.ensure_folder(service)
-                        index_bytes = google_drive_util.download_file_by_name(service, folder_id, "index.pkl")
+                        import supabase_storage_util
+                        username = st.session_state.get('username')
+                        index_bytes = supabase_storage_util.download_file(username, "index.pkl")
                         
                         if not index_bytes:
-                            st.warning("AI Memory (index.pkl) not found in Google Drive! Please click 'Analyze the materials' in the sidebar first.")
+                            st.warning("AI Memory (index.pkl) not found! Please click 'Analyze the materials' in the sidebar first.")
                         else:
                             with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tmp_idx:
                                 tmp_idx.write(index_bytes)
