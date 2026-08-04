@@ -82,3 +82,56 @@ def download_all_user_files(username: str, local_dir: str):
                         f.write(content)
                     downloaded_files.append(fname)
     return downloaded_files
+
+
+def list_room_files(room_code: str):
+    client = get_supabase()
+    prefix = f"rooms/{room_code}/"
+    res = client.storage.from_("study-materials").list(path=prefix)
+    files = []
+    if isinstance(res, list):
+        for item in res:
+            if item.get("name") != ".emptyFolderPlaceholder":
+                files.append(item.get("name"))
+    return files
+
+def upload_room_file(room_code: str, filename: str, content: bytes):
+    client = get_supabase()
+    path = f"rooms/{room_code}/{filename}"
+    client.storage.from_("study-materials").remove([path])
+    res = client.storage.from_("study-materials").upload(file=content, path=path, file_options={"content-type": "application/octet-stream"})
+
+def download_room_file(room_code: str, filename: str) -> bytes:
+    client = get_supabase()
+    path = f"rooms/{room_code}/{filename}"
+    try:
+        res = client.storage.from_("study-materials").download(path)
+        return res
+    except Exception as e:
+        import streamlit as st
+        st.error(f"Failed to download '{filename}': {e}")
+        return None
+
+def delete_room_file(room_code: str, filename: str):
+    client = get_supabase()
+    path = f"rooms/{room_code}/{filename}"
+    client.storage.from_("study-materials").remove([path])
+
+def download_all_room_files(room_code: str, local_dir: str):
+    client = get_supabase()
+    prefix = f"rooms/{room_code}/"
+    if not os.path.exists(local_dir):
+        os.makedirs(local_dir)
+    res = client.storage.from_("study-materials").list(path=prefix)
+    downloaded_files = []
+    if isinstance(res, list):
+        for item in res:
+            fname = item.get("name")
+            if fname and fname != ".emptyFolderPlaceholder" and fname != "index.pkl":
+                local_path = os.path.join(local_dir, fname)
+                content = download_room_file(room_code, fname)
+                if content:
+                    with open(local_path, "wb") as f:
+                        f.write(content)
+                    downloaded_files.append(fname)
+    return downloaded_files

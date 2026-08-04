@@ -68,8 +68,11 @@ def hash_password(password: str) -> str:
 
 
 def authenticate_user(email, password):
-    if email == "admin" and password == "myadminsecret":
-        return True, "admin"
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin")
+    admin_password = os.environ.get("ADMIN_PASSWORD", "myadminsecret")
+    
+    if email == admin_email and password == admin_password:
+        return True, admin_email
 
     db = get_db()
     docs = db.collection("users").where("email", "==", email).limit(1).stream()
@@ -107,6 +110,30 @@ def load_users():
         for d in docs
     ]
 
+
+def create_room(room_code: str, created_by: str):
+    db = get_db()
+    existing = db.collection("rooms").where("room_code", "==", room_code).limit(1).stream()
+    for _ in existing:
+        return False
+    db.collection("rooms").add({
+        "room_code": room_code,
+        "created_by": created_by,
+        "created_at": datetime.utcnow().isoformat()
+    })
+    return True
+
+def load_rooms():
+    db = get_db()
+    docs = db.collection("rooms").order_by("created_at", direction=firestore.Query.DESCENDING).stream()
+    return [d.to_dict()["room_code"] for d in docs]
+
+def check_room_exists(room_code: str):
+    db = get_db()
+    docs = db.collection("rooms").where("room_code", "==", room_code).limit(1).stream()
+    for _ in docs:
+        return True
+    return False
 
 def record_upload(filename: str, original_name: str, size_bytes: int):
     db = get_db()
@@ -356,7 +383,7 @@ def ensure_user_signed_in():
                         success, user_email = authenticate_user(email, password)
                         if success:
                             st.session_state["username"] = user_email
-                            st.session_state["is_admin"] = (user_email == "admin")
+                            st.session_state["is_admin"] = (user_email == os.environ.get("ADMIN_EMAIL", "admin"))
                             st.session_state["signed_in_expires"] = now + timedelta(hours=48)
                             st.rerun()
                         else:
@@ -396,431 +423,207 @@ def main():
         page_title="Study Material RAG Assistant",
         page_icon="📚",
         layout="wide",
+        initial_sidebar_state="expanded"
     )
-
-    # ── Global Custom Gradient Dark Theme ────────────────────────────────────
-    st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-
-    /* Main background */
-    .stApp { 
-        background: linear-gradient(135deg, #FF4103 0%, #001621 100%) !important; 
-        color: #ffffff !important;
-    }
-
-    /* Sidebar */
-    [data-testid="stSidebar"] {
-        background: rgba(0, 22, 33, 0.6) !important;
-        border-right: 1px solid rgba(255, 65, 3, 0.3);
-    }
-
-    /* Sidebar text */
-    [data-testid="stSidebar"] * { color: #f8fafc !important; }
-
-    /* Headings */
-    h1, h2, h3 { color: #ffffff !important; text-shadow: 0px 2px 4px rgba(0,0,0,0.5); }
-
-    /* Buttons */
-    .stButton > button {
-        border-radius: 10px;
-        border: 1.5px solid rgba(255, 65, 3, 0.5);
-        background: rgba(0, 22, 33, 0.8);
-        color: #FF4103;
-        font-weight: 600;
-        transition: all 0.2s;
-    }
-    .stButton > button:hover {
-        background: #FF4103;
-        border-color: #FF4103;
-        color: #ffffff;
-    }
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(90deg, #FF4103, #ff6b3d);
-        color: white;
-        border: none;
-        box-shadow: 0 4px 15px rgba(255, 65, 3, 0.4);
-    }
-    .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(90deg, #ff6b3d, #FF4103);
-        transform: translateY(-1px);
-    }
-
-    /* Input fields & Labels */
-    [data-testid="stWidgetLabel"] p {
-        color: #e2e8f0 !important;
-        font-weight: 600 !important;
-    }
-    
-    div[data-testid="stTextInput"] input,
-    div[data-testid="stTextArea"] textarea {
-        background: rgba(0, 22, 33, 0.7) !important;
-        border: 1.5px solid rgba(255, 65, 3, 0.4) !important;
-        border-radius: 10px !important;
-        color: #ffffff !important;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.2) !important;
-    }
-    div[data-testid="stTextInput"] input:focus,
-    div[data-testid="stTextArea"] textarea:focus {
-        border-color: #FF4103 !important;
-        box-shadow: 0 0 0 3px rgba(255, 65, 3, 0.25) !important;
-    }
-
-    /* Radio */
-    div[role="radiogroup"] label {
-        color: #FF4103 !important;
-    }
-
-    /* Expanders / Details */
-    details summary {
-        background: rgba(0, 22, 33, 0.8);
-        border-radius: 8px;
-        padding: 6px 12px;
-        color: #FF4103;
-        border: 1px solid rgba(255, 65, 3, 0.5);
-    }
-    
-    /* Header Menu Bar */
-    [data-testid="stHeader"] {
-        background: rgba(0, 22, 33, 0.9) !important;
-        border-bottom: 1px solid rgba(255, 65, 3, 0.3);
-    }
-    
-    /* Chat Messages / Answers */
-    [data-testid="stChatMessage"] {
-        background: transparent !important;
-        border: 1px solid rgba(255, 65, 3, 0.2) !important;
-        border-radius: 12px;
-        padding: 1rem;
-        margin-bottom: 1rem;
-    }
-    [data-testid="stChatMessage"] * {
-        color: #ffffff !important;
-    }
-
-    /* Bottom Chat Input Container */
-    [data-testid="stBottomBlockContainer"],
-    [data-testid="stChatInputContainer"] {
-        background: transparent !important;
-    }
-
-    /* Info / success / warning boxes */
-    .stAlert { border-radius: 10px; background: rgba(0, 22, 33, 0.8) !important; color: #ffffff !important; border: 1px solid rgba(255, 255, 255, 0.1); }
-    </style>
-    """, unsafe_allow_html=True)
 
     ensure_env()
     init_storage()
     ensure_user_signed_in()
 
-    st.markdown("""
-    <div style="text-align:center; padding: 1rem 0 2rem 0;">
-      <div style="font-size:2.5rem; margin-bottom:0.2rem;">📚</div>
-      <div style="font-size:2.2rem; font-weight:700; color:#FF4103; letter-spacing:-0.5px; text-shadow: 0px 2px 4px rgba(0,0,0,0.5);">Hey there! Ready to study?</div>
-      <div style="font-size:1.05rem; color:#e2e8f0; margin-top:0.2rem;">Drop your PDFs or text files below and ask me anything about them.</div>
-    </div>
-    """, unsafe_allow_html=True)
+    if st.session_state.get("is_admin"):
+        admin_panel()
+    else:
+        user_panel()
 
-    # Simple account area in sidebar (after initial sign-in gate)
-    with st.sidebar:
-        st.subheader("Account")
-        st.markdown(f"**Current user:** `{st.session_state.get('username', 'guest')}`")
-        if st.session_state.get("is_admin"):
-            st.markdown("*(Admin Mode)*")
-        if st.button("Sign out"):
-            import os
-            if os.path.exists("token.pickle"):
-                os.remove("token.pickle")
-            st.session_state.clear()
-            st.rerun()
+def admin_panel():
+    st.sidebar.title("Admin Panel")
+    menu = st.sidebar.radio("Navigation", ["Manage Rooms", "All Users", "All Uploads", "User Search History"])
 
+    if st.sidebar.button("Log out"):
+        st.session_state.clear()
+        st.rerun()
+
+    if menu == "Manage Rooms":
+        st.title("Manage Study Rooms")
+        st.write("Create rooms, upload materials, and build AI memory.")
+        
+        # Room Creation
+        with st.expander("➕ Create a New Room", expanded=True):
+            new_room_code = st.text_input("Room Code (e.g., BIO101)")
+            if st.button("Create Room"):
+                if new_room_code:
+                    if create_room(new_room_code, st.session_state["username"]):
+                        st.success(f"Room '{new_room_code}' created successfully!")
+                    else:
+                        st.error("Room code already exists.")
+                else:
+                    st.warning("Please enter a room code.")
+                    
         st.markdown("---")
-        if st.session_state.get("is_admin"):
-            menu_options = ["Admin Dashboard", "Manage GitHub"]
-        else:
-            menu_options = ["New study session", "History"]
-
-        menu = st.radio(
-            "Menu",
-            menu_options,
-            index=0,
-        )
-
-        st.markdown("---")
-        
-        st.header("Upload & Index (Supabase)")
-        st.write("Your files are synced securely to your cloud storage.")
-        
-        import supabase_storage_util
-
-        username = st.session_state.get('username')
-        existing_files = []
-        try:
-            existing_files = supabase_storage_util.list_user_files(username)
-        except Exception as e:
-            st.error(f"Failed to load files from Supabase: {e}")
-        
-        selected_files = []
-        if existing_files:
-            st.markdown("**Currently uploaded files:**")
-            # Style for delete buttons
-            st.markdown("""
-            <style>
-            .del-btn button {
-                background: #e0f2fe !important;
-                border: 1px solid #bae6fd !important;
-                border-radius: 50% !important;
-                color: #1e293b !important;
-                font-size: 0.75rem !important;
-                padding: 0 !important;
-                width: 22px !important;
-                height: 22px !important;
-                min-height: unset !important;
-                line-height: 22px !important;
-                transition: all 0.2s !important;
-            }
-            .del-btn button:hover {
-                background: #bae6fd !important;
-                border-color: #0ea5e9 !important;
-                color: #000000 !important;
-                transform: scale(1.15);
-            }
-            </style>
-            """, unsafe_allow_html=True)
-            for fname in sorted(existing_files):
-                col1, col2 = st.columns([0.88, 0.12])
-                with col1:
-                    is_selected = st.checkbox(f"{fname}", value=True, key=f"sel_{fname}")
-                    if is_selected:
-                        selected_files.append(fname)
-                with col2:
-                    with st.container():
-                        st.markdown('<div class="del-btn">', unsafe_allow_html=True)
-                        if st.button("✕", key=f"del_{fname}", help=f"Remove {fname}"):
-                            try:
-                                supabase_storage_util.delete_file(username, fname)
-                            except Exception as e:
-                                st.error(f"Failed to delete {fname}: {e}")
-                            st.rerun()
-                        st.markdown('</div>', unsafe_allow_html=True)
-        st.session_state["selected_files"] = selected_files
-
-        if "file_uploader_key" not in st.session_state:
-            st.session_state["file_uploader_key"] = 1
-
-        uploaded_files = st.file_uploader(
-            "Upload study materials (PDF / TXT)",
-            type=["pdf", "txt"],
-            accept_multiple_files=True,
-            key=str(st.session_state["file_uploader_key"]),
-        )
-
-        if uploaded_files:
-            new_files = False
-            with st.spinner("Uploading files to your cloud storage..."):
-                for f in uploaded_files:
-                    try:
-                        supabase_storage_util.upload_file(username, f.name, f.getbuffer())
-                        record_upload(
-                            filename=f.name,
-                            original_name=f.name,
-                            size_bytes=len(f.getbuffer()),
-                        )
-                        new_files = True
-                    except Exception as e:
-                        st.error(f"Failed to save {f.name}: {e}")
-            if new_files:
-                st.success("Files uploaded successfully. You can upload more files step by step.")
-                st.session_state["file_uploader_key"] += 1
-                st.rerun()
-
-        if st.button("Analyze the materials"):
-            with st.spinner("Downloading files from Drive and building index..."):
-                try:
+        rooms = load_rooms()
+        if not rooms:
+            st.info("No rooms created yet.")
+            return
+            
+        selected_room = st.selectbox("Select Room to Manage", rooms)
+        if selected_room:
+            st.header(f"Room: {selected_room}")
+            
+            import supabase_storage_util
+            try:
+                existing_files = supabase_storage_util.list_room_files(selected_room)
+            except Exception as e:
+                st.error(f"Failed to load files: {e}")
+                existing_files = []
+                
+            if existing_files:
+                st.subheader("Current Materials")
+                for fname in existing_files:
+                    if fname == "index.pkl":
+                        continue
+                    col1, col2 = st.columns([4, 1])
+                    col1.write(f"📄 {fname}")
+                    if col2.button("✕ Remove", key=f"del_{fname}"):
+                        supabase_storage_util.delete_room_file(selected_room, fname)
+                        st.rerun()
+            
+            st.subheader("Upload New Materials")
+            uploaded_files = st.file_uploader(
+                "Upload PDFs or Text files", 
+                type=["pdf", "txt"], 
+                accept_multiple_files=True,
+                key="admin_upload"
+            )
+            
+            if st.button("Upload to Room", type="primary") and uploaded_files:
+                with st.spinner("Uploading..."):
+                    for f in uploaded_files:
+                        supabase_storage_util.upload_room_file(selected_room, f.name, f.getbuffer())
+                    st.success("Uploaded successfully!")
+                    st.rerun()
+                    
+            st.markdown("---")
+            st.subheader("Build AI Memory")
+            st.write("After adding or removing files, click below to update the AI's memory for this room.")
+            if st.button("Analyze & Index Materials", type="primary"):
+                with st.spinner("Analyzing... this may take a minute."):
                     import tempfile
                     from pathlib import Path
                     from rag_study_assistant import ingest
-                    
                     with tempfile.TemporaryDirectory() as tmpdir:
                         local_dir = Path(tmpdir)
-                        downloaded = supabase_storage_util.download_all_user_files(username, str(local_dir))
-                        
+                        downloaded = supabase_storage_util.download_all_room_files(selected_room, str(local_dir))
                         if not downloaded:
-                            st.warning("No files found to index. Please upload files first.")
+                            st.warning("No files found to index.")
                         else:
                             index_file_path = local_dir / "index.pkl"
                             ingest(study_dir=local_dir, index_path=index_file_path)
-                            
                             with open(index_file_path, "rb") as index_f:
-                                supabase_storage_util.upload_file(username, "index.pkl", index_f.read())
-                                
-                            st.success("Index rebuilt and securely saved to your cloud storage!")
-                except Exception as e:
-                    st.error(f"Error while ingesting study materials: {e}")
+                                supabase_storage_util.upload_room_file(selected_room, "index.pkl", index_f.read())
+                            st.success("Index rebuilt successfully!")
 
+    elif menu == "All Users":
+        st.title("User Management")
+        users = load_users()
+        if users:
+            st.table(users)
+        else:
+            st.write("No users found.")
 
+    elif menu == "All Uploads":
+        st.title("Upload History")
+        uploads = load_uploads()
+        if uploads:
+            st.table([{"Filename": u[0], "Size (Bytes)": u[2], "Date": u[3]} for u in uploads])
+        else:
+            st.write("No uploads found.")
 
-    # Main content area depends on selected menu
-    if menu == "New study session":
-        st.subheader("Study Chat")
-        st.caption("Ask questions about your study materials.")
+    elif menu == "User Search History":
+        st.title("Search History")
+        username_query = st.text_input("Enter username (email) to view history:")
+        if username_query:
+            hist = load_history(username_query)
+            if hist:
+                for h in hist:
+                    with st.expander(f"Q: {h['question']} ({h['created_at']})"):
+                        st.write(h["answer"])
+            else:
+                st.write("No history found for this user.")
 
+def user_panel():
+    st.sidebar.title("📚 Study Assistant")
+    
+    if st.sidebar.button("Log out"):
+        st.session_state.clear()
+        st.rerun()
+        
+    current_room = st.session_state.get("current_room")
+    
+    if not current_room:
+        st.title("Join a Study Room")
+        st.write("Enter the room code provided by your admin to access the study materials.")
+        room_code = st.text_input("Room Code")
+        if st.button("Join Room", type="primary"):
+            if check_room_exists(room_code):
+                st.session_state["current_room"] = room_code
+                st.session_state["messages"] = []
+                st.success(f"Joined room {room_code}!")
+                st.rerun()
+            else:
+                st.error("Invalid room code. Please try again.")
+    else:
+        st.sidebar.markdown("---")
+        st.sidebar.write(f"**Current Room:** {current_room}")
+        if st.sidebar.button("Leave Room"):
+            st.session_state["current_room"] = None
+            st.session_state["messages"] = []
+            st.rerun()
+            
+        st.subheader(f"Room: {current_room} - Chat")
+        
         if "messages" not in st.session_state:
             st.session_state.messages = []
             
-
-
-        # Display chat messages from history on app rerun
         import urllib.parse
         for i, message in enumerate(st.session_state.messages):
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
-                if message["role"] == "assistant":
-                    col1, col2, col3, col4 = st.columns([1, 1.2, 1.2, 1.5])
-                    ans_text = message["content"]
-                    
-                    # For ChatGPT and Claude, the user probably wants to ask them the original question, 
-                    # but if they meant "copy as prompt", they might want the AI's response to be copied.
-                    # We'll just encode the AI's answer.
-                    q_text = urllib.parse.quote(ans_text)
-                    
-                    with col1:
-                        with st.popover("📋 Copy"):
-                            st.caption("Click the copy icon in the top right of this box:")
-                            st.code(ans_text, language="markdown")
-                    with col2:
-                        st.markdown(f'<a href="https://chatgpt.com/?q={q_text}" target="_blank" style="text-decoration:none;"><button style="width:100%; border-radius:4px; padding:4px 8px; border:1px solid #666; background:transparent; color:inherit; cursor:pointer;">🤖 ChatGPT</button></a>', unsafe_allow_html=True)
-                    with col3:
-                        st.markdown(f'<a href="https://claude.ai/new?q={q_text}" target="_blank" style="text-decoration:none;"><button style="width:100%; border-radius:4px; padding:4px 8px; border:1px solid #666; background:transparent; color:inherit; cursor:pointer;">🧠 Claude</button></a>', unsafe_allow_html=True)
-                    with col4:
-                        pdf_bytes = create_pdf(ans_text)
-                        st.download_button("📄 Save PDF", data=pdf_bytes, file_name=f"response_{i}.pdf", mime="application/pdf", key=f"dl_hist_{i}")
-
-        # Accept user input
-        if prompt := st.chat_input("Type your question about the uploaded study materials..."):
-            # Add user message to chat history
+                
+        if prompt := st.chat_input("Ask a question about this room's materials..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
-            # Display user message in chat message container
             with st.chat_message("user"):
                 st.markdown(prompt)
 
-            # Display assistant response in chat message container
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     answer = ""
                     try:
-                        allowed = st.session_state.get("selected_files", [])
                         import tempfile
                         from pathlib import Path
                         from rag_study_assistant import retrieve, answer_question
-                        
                         import supabase_storage_util
-                        username = st.session_state.get('username')
-                        index_bytes = supabase_storage_util.download_file(username, "index.pkl")
                         
+                        index_bytes = supabase_storage_util.download_room_file(current_room, "index.pkl")
                         if not index_bytes:
-                            st.warning("AI Memory (index.pkl) not found! Please click 'Analyze the materials' in the sidebar first.")
+                            st.warning("AI Memory not found! The admin needs to analyze the materials for this room first.")
                         else:
                             with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tmp_idx:
                                 tmp_idx.write(index_bytes)
                                 tmp_idx_path = Path(tmp_idx.name)
-                                
                             try:
-                                chunks = retrieve(prompt, k=5, allowed_sources=allowed, index_path=tmp_idx_path)
+                                chunks = retrieve(prompt, k=5, allowed_sources=[], index_path=tmp_idx_path)
                                 if not chunks:
-                                    st.warning(
-                                        "No relevant passages found in your study materials. "
-                                        "Make sure you uploaded files and rebuilt the index."
-                                    )
+                                    st.warning("No relevant passages found.")
                                 else:
                                     answer = answer_question(prompt, chunks)
                                     st.markdown(answer)
-                                    # Save to history for current user
                                     save_history(st.session_state["username"], prompt, answer)
                             finally:
-                                import os
                                 os.remove(tmp_idx_path)
                     except Exception as e:
-                        st.error(f"Error while answering the question: {e}")
+                        st.error(f"Error: {e}")
             if answer:
-                # Add assistant response to chat history
                 st.session_state.messages.append({"role": "assistant", "content": answer})
-                # Rerun to render the buttons nicely via the history loop above
-                st.rerun()
-
-    elif menu == "History":
-        st.subheader("History")
-        st.caption(
-            "View your previous questions and answers. You can pin important ones or clear history."
-        )
-
-        username = st.session_state.get("username", "guest")
-        entries = load_history(username)
-
-        col_left, col_right = st.columns([1, 1])
-        with col_left:
-            if st.button("Refresh history"):
-                entries = load_history(username)
-        with col_right:
-            if st.button("Clear history for this user"):
-                clear_history(username)
-                entries = []
-
-        if not entries:
-            st.info("No history yet for this user.")
-        else:
-            for entry in entries:
-                hist_id, question, answer, pinned, created_at = entry
-                pin_label = "Unpin" if pinned else "Pin"
-                with st.expander(
-                    f"{'📌 ' if pinned else ''}{created_at} – {question[:60]}{'...' if len(question) > 60 else ''}"
-                ):
-                    st.markdown(f"**Question**\n\n{question}")
-                    st.markdown(f"**Answer**\n\n{answer}")
-                    cols = st.columns(2)
-                    with cols[0]:
-                        if st.button(
-                            pin_label,
-                            key=f"pin_{hist_id}_{pinned}",
-                        ):
-                            set_pin(hist_id, not pinned)
-                            # For Streamlit >= 1.x, use st.rerun(); older versions used experimental_rerun
-                            st.rerun()
-                    with cols[1]:
-                        st.write(f"Created at: {created_at}")
-                        
-    elif menu == "Manage GitHub" and st.session_state.get("is_admin"):
-        st.subheader("Manage GitHub Repository (Admin Only)")
-        st.caption("Sync your latest changes and study materials to GitHub directly from the app.")
-        
-        commit_msg = st.text_input("Commit Message", value="Update study materials and application files")
-        
-        if st.button("Commit and Push to GitHub"):
-            with st.spinner("Syncing to GitHub..."):
-                try:
-                    subprocess.run(["git", "add", "."], check=True, capture_output=True, text=True)
-                    res_commit = subprocess.run(["git", "commit", "-m", commit_msg], capture_output=True, text=True)
-                    res_push = subprocess.run(["git", "push", "origin", "main"], check=True, capture_output=True, text=True)
-                    
-                    st.success("Successfully pushed to GitHub!")
-                    with st.expander("Show Logs"):
-                        st.text("Commit Log:\n" + res_commit.stdout + res_commit.stderr)
-                        st.text("Push Log:\n" + res_push.stdout + res_push.stderr)
-                except subprocess.CalledProcessError as e:
-                    st.error("Failed to sync with GitHub.")
-                    with st.expander("Show Error Details"):
-                        st.text(e.stderr or e.stdout)
-
-    elif menu == "Admin Dashboard" and st.session_state.get("is_admin"):
-        st.subheader("Admin Dashboard")
-        st.caption("Overview of registered users (Logins and Sign Ups).")
-        users = load_users()
-        if users:
-            st.dataframe(users, use_container_width=True)
-        else:
-            st.info("No users registered yet.")
-
 
 if __name__ == "__main__":
     main()
