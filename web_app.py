@@ -366,11 +366,11 @@ def ensure_user_signed_in():
         c1, c2 = st.columns(2)
         with c1:
             if mode == "signup":
-                if st.form_submit_button("Already have an account? Sign In", key="go_signin"):
+                if st.button("Already have an account? Sign In", key="go_signin"):
                     st.session_state["login_mode"] = "signin"
                     st.rerun()
             else:
-                if st.form_submit_button("Need an account? Sign Up", key="go_signup"):
+                if st.button("Need an account? Sign Up", key="go_signup"):
                     st.session_state["login_mode"] = "signup"
                     st.rerun()
                     
@@ -669,9 +669,7 @@ def main():
         if "messages" not in st.session_state:
             st.session_state.messages = []
             
-        if st.button("Clear Chat"):
-            st.session_state.messages = []
-            st.rerun()
+
 
         # Display chat messages from history on app rerun
         import urllib.parse

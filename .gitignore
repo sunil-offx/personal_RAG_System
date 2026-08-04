@@ -10,7 +10,6 @@ package.json
 package-lock.json
 vercel.json
 firebase_key.json
-google_credentials.json
 token.pickle
 .oauth_state.json
 .streamlit/secrets.toml
