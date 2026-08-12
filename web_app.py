@@ -280,6 +280,18 @@ def check_room_exists(room_code: str):
         return True
     return False
 
+def get_room_creator(room_code: str) -> str:
+    db = get_db()
+    docs = db.collection("rooms").where("room_code", "==", room_code).limit(1).stream()
+    for doc in docs:
+        creator_email = doc.to_dict().get("created_by", "")
+        if creator_email:
+            admin_name = get_admin_profile(creator_email)
+            if admin_name:
+                return f"{admin_name} ({creator_email})"
+            return creator_email
+    return "Admin"
+
 def record_upload(filename: str, original_name: str, size_bytes: int):
     db = get_db()
     db.collection("uploads").add({
@@ -732,24 +744,27 @@ def admin_panel():
                 st.session_state["new_room_input"] = ""
                 
             def generate_random_code():
-                st.session_state["new_room_input"] = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+                st.session_state["new_room_input"] = ''.join(random.choices(string.digits, k=6))
                 
             col1, col2 = st.columns([3, 1])
             with col1:
-                new_room_code = st.text_input("Room Code (e.g., BIO101)", key="new_room_input")
+                new_room_code = st.text_input("Numerical Room ID (e.g., 582914)", key="new_room_input")
             with col2:
                 st.write("") # spacing
                 st.write("") # spacing
-                st.button("🎲 Generate Random Code", use_container_width=True, on_click=generate_random_code)
+                st.button("🎲 Generate Numerical ID", use_container_width=True, on_click=generate_random_code)
                     
             if st.button("Create Room", type="primary"):
-                if new_room_code:
-                    if create_room(new_room_code, st.session_state["username"]):
-                        st.success(f"Room '{new_room_code}' created successfully!")
+                clean_code = new_room_code.strip()
+                if clean_code:
+                    if not clean_code.isdigit():
+                        st.warning("Room ID must contain numbers only (digits 0-9).")
+                    elif create_room(clean_code, st.session_state["username"]):
+                        st.success(f"Room '{clean_code}' created successfully!")
                     else:
-                        st.error("Room code already exists.")
+                        st.error("Room ID already exists.")
                 else:
-                    st.warning("Please enter a room code.")
+                    st.warning("Please enter a numerical room ID.")
                     
         st.markdown("---")
         rooms = load_rooms(admin_email=st.session_state["username"])
@@ -946,39 +961,51 @@ def user_panel():
             tab1, tab2 = st.tabs(["To open", "Opened"])
             
             with tab1:
-                st.write("Enter the room code provided by your admin to access the study materials.")
-                room_code = st.text_input("Room Code")
+                st.write("Enter the numerical room ID provided by your admin to access the study materials.")
+                room_code = st.text_input("Numerical Room ID")
                 if st.button("Join room", type="primary"):
-                    if check_room_exists(room_code):
-                        st.session_state["current_room"] = room_code
+                    clean_code = room_code.strip()
+                    if not clean_code:
+                        st.warning("Please enter a numerical Room ID.")
+                    elif not clean_code.isdigit():
+                        st.error("Room ID must be numerical (numbers only).")
+                    elif check_room_exists(clean_code):
+                        st.session_state["current_room"] = clean_code
                         st.session_state["messages"] = []
-                        set_user_room(st.session_state["username"], room_code)
-                        record_room_visit(st.session_state["username"], room_code)
-                        st.success(f"Joined room {room_code}!")
+                        set_user_room(st.session_state["username"], clean_code)
+                        record_room_visit(st.session_state["username"], clean_code)
+                        st.success(f"Joined room {clean_code}!")
                         st.rerun()
                     else:
-                        st.error("Invalid room code. Please try again.")
+                        st.error("Invalid room ID. Please check and try again.")
             
             with tab2:
                 if joined_rooms:
-                    selected_recent = st.selectbox(
-                        "Select the existing room", 
-                        joined_rooms,
+                    room_options_map = {}
+                    for r_code in joined_rooms:
+                        creator_info = get_room_creator(r_code)
+                        label = f"Room {r_code} (Admin: {creator_info})"
+                        room_options_map[label] = r_code
+
+                    selected_label = st.selectbox(
+                        "Select an opened room", 
+                        options=list(room_options_map.keys()),
                         index=None,
                         placeholder="-- Choose a room --"
                     )
-                    if st.button("Enter", type="secondary"):
-                        if selected_recent:
-                            if check_room_exists(selected_recent):
-                                st.session_state["current_room"] = selected_recent
+                    if st.button("Enter Room", type="primary"):
+                        if selected_label:
+                            actual_room_code = room_options_map[selected_label]
+                            if check_room_exists(actual_room_code):
+                                st.session_state["current_room"] = actual_room_code
                                 st.session_state["messages"] = []
-                                set_user_room(st.session_state["username"], selected_recent)
-                                record_room_visit(st.session_state["username"], selected_recent)
+                                set_user_room(st.session_state["username"], actual_room_code)
+                                record_room_visit(st.session_state["username"], actual_room_code)
                                 st.rerun()
                             else:
                                 st.error("This room no longer exists.")
                 else:
-                    st.write("You haven't joined any rooms yet.")
+                    st.info("You haven't opened any rooms yet. Use 'To open' tab to join a room.")
         else:
             st.sidebar.markdown("---")
             st.sidebar.write(f"**Current Room:** {current_room}")
