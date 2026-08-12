@@ -601,6 +601,82 @@ def main():
         initial_sidebar_state="expanded"
     )
 
+    # Custom Theme Styling using #1E3A8A, #2563EB, and #0EA5E9
+    st.markdown("""
+        <style>
+        /* Main background & Container styling */
+        .stApp {
+            background: linear-gradient(135deg, #070B15 0%, #0F172A 50%, #1E3A8A 100%) !important;
+            color: #F0F6FF !important;
+        }
+
+        /* Sidebar Styling */
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #0A0F1D 0%, #1E3A8A 100%) !important;
+            border-right: 1px solid rgba(14, 165, 233, 0.2) !important;
+        }
+
+        /* Headers with gradient colors */
+        h1, h2, h3 {
+            background: linear-gradient(90deg, #0EA5E9 0%, #2563EB 50%, #60A5FA 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 700 !important;
+        }
+
+        /* Buttons Styling */
+        .stButton > button {
+            background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%) !important;
+            color: #FFFFFF !important;
+            border: 1px solid #0EA5E9 !important;
+            border-radius: 8px !important;
+            font-weight: 600 !important;
+            transition: all 0.3s ease !important;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3) !important;
+        }
+
+        .stButton > button:hover {
+            background: linear-gradient(135deg, #2563EB 0%, #0EA5E9 100%) !important;
+            border-color: #38BDF8 !important;
+            transform: translateY(-2px) !important;
+            box-shadow: 0 6px 18px rgba(14, 165, 233, 0.5) !important;
+        }
+
+        /* Input boxes & Text area styling */
+        .stTextInput > div > div > input, .stTextArea > div > div > textarea, .stSelectbox > div > div {
+            background-color: rgba(15, 23, 42, 0.8) !important;
+            color: #F0F6FF !important;
+            border: 1px solid rgba(37, 99, 235, 0.5) !important;
+            border-radius: 8px !important;
+        }
+
+        .stTextInput > div > div > input:focus, .stTextArea > div > div > textarea:focus {
+            border-color: #0EA5E9 !important;
+            box-shadow: 0 0 10px rgba(14, 165, 233, 0.4) !important;
+        }
+
+        /* Cards & Metric containers */
+        [data-testid="stMetricValue"], [data-testid="stMetric"] {
+            background: rgba(30, 58, 138, 0.3) !important;
+            border: 1px solid rgba(14, 165, 233, 0.3) !important;
+            border-radius: 10px !important;
+            padding: 10px !important;
+        }
+
+        /* Links and accents */
+        a {
+            color: #0EA5E9 !important;
+        }
+
+        /* Streamlit info & warning box borders */
+        .stAlert {
+            background-color: rgba(30, 58, 138, 0.4) !important;
+            border: 1px solid #2563EB !important;
+            color: #F0F6FF !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     ensure_env()
     init_storage()
     ensure_user_signed_in()
