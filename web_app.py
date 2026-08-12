@@ -744,27 +744,27 @@ def admin_panel():
                 st.session_state["new_room_input"] = ""
                 
             def generate_random_code():
-                st.session_state["new_room_input"] = ''.join(random.choices(string.digits, k=6))
+                st.session_state["new_room_input"] = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
                 
             col1, col2 = st.columns([3, 1])
             with col1:
-                new_room_code = st.text_input("Numerical Room ID (e.g., 582914)", key="new_room_input")
+                new_room_code = st.text_input("Room ID (e.g., DQZ4QX)", key="new_room_input")
             with col2:
                 st.write("") # spacing
                 st.write("") # spacing
-                st.button("🎲 Generate Numerical ID", use_container_width=True, on_click=generate_random_code)
+                st.button("🎲 Generate Random ID", use_container_width=True, on_click=generate_random_code)
                     
             if st.button("Create Room", type="primary"):
-                clean_code = new_room_code.strip()
+                clean_code = new_room_code.strip().upper()
                 if clean_code:
-                    if not clean_code.isdigit():
-                        st.warning("Room ID must contain numbers only (digits 0-9).")
+                    if not clean_code.isalnum():
+                        st.warning("Room ID must contain letters and numbers only (e.g., DQZ4QX).")
                     elif create_room(clean_code, st.session_state["username"]):
                         st.success(f"Room '{clean_code}' created successfully!")
                     else:
                         st.error("Room ID already exists.")
                 else:
-                    st.warning("Please enter a numerical room ID.")
+                    st.warning("Please enter a Room ID.")
                     
         st.markdown("---")
         rooms = load_rooms(admin_email=st.session_state["username"])
@@ -961,14 +961,14 @@ def user_panel():
             tab1, tab2 = st.tabs(["To open", "Opened"])
             
             with tab1:
-                st.write("Enter the numerical room ID provided by your admin to access the study materials.")
-                room_code = st.text_input("Numerical Room ID")
+                st.write("Enter the Room ID provided by your admin to access the study materials.")
+                room_code = st.text_input("Room ID (e.g., DQZ4QX)")
                 if st.button("Join room", type="primary"):
-                    clean_code = room_code.strip()
+                    clean_code = room_code.strip().upper()
                     if not clean_code:
-                        st.warning("Please enter a numerical Room ID.")
-                    elif not clean_code.isdigit():
-                        st.error("Room ID must be numerical (numbers only).")
+                        st.warning("Please enter a Room ID.")
+                    elif not clean_code.isalnum():
+                        st.error("Room ID must contain letters and numbers (e.g., DQZ4QX).")
                     elif check_room_exists(clean_code):
                         st.session_state["current_room"] = clean_code
                         st.session_state["messages"] = []
@@ -977,7 +977,7 @@ def user_panel():
                         st.success(f"Joined room {clean_code}!")
                         st.rerun()
                     else:
-                        st.error("Invalid room ID. Please check and try again.")
+                        st.error("Invalid Room ID. Please check and try again.")
             
             with tab2:
                 if joined_rooms:
