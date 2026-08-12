@@ -19,3 +19,5 @@ google-auth-httplib2
 google-auth-oauthlib
 fastapi
 uvicorn
+PyPDF2>=3.0.0
+pypdf>=3.0.0

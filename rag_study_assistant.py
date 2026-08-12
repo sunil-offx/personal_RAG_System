@@ -93,9 +93,12 @@ def read_pdf(path: Path) -> List[Tuple[int, str]]:
             pages = []
             
     if not pages:
-        print(f"Parsing {path.name} with PyPDF2 (Fallback)...")
-        import PyPDF2
+        print(f"Parsing {path.name} with PyPDF2/pypdf (Fallback)...")
         try:
+            try:
+                import PyPDF2
+            except ImportError:
+                import pypdf as PyPDF2
             with open(path, "rb") as f:
                 reader = PyPDF2.PdfReader(f)
                 for i in range(len(reader.pages)):
@@ -104,7 +107,7 @@ def read_pdf(path: Path) -> List[Tuple[int, str]]:
                     if text and text.strip():
                         pages.append((i + 1, text))
         except Exception as e:
-            print(f"PyPDF2 failed for {path.name}: {e}")
+            print(f"PyPDF2/pypdf failed for {path.name}: {e}")
             
     return pages
 
