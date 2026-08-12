@@ -201,27 +201,30 @@ def ingest(study_dir: Path = None, room_code: str = "default") -> None:
     texts = [c.text for c in chunks]
     embeddings = embedder.encode(texts, show_progress_bar=True, convert_to_numpy=True)
 
-    # 1. Save local pickle file (.pkl)
-    index_filename = f"{room_code}_index.pkl" if room_code != "default" else "study_index.pkl"
-    index_path = Path(__file__).parent / index_filename
-    index_data = {
-        "embeddings": embeddings.astype(np.float32),
-        "chunks": chunks,
-        "embed_model": EMBED_MODEL_NAME,
-        "room_code": room_code
-    }
-    with open(index_path, "wb") as f:
-        pickle.dump(index_data, f)
-    print(f"Local index saved to '.pkl' file at '{index_path}'.")
-
-    # 1b. Backup .pkl index file to Supabase storage for cloud persistence
+    # 1. Save local pickle file (.pkl) if local disk is writable
     try:
-        from supabase_storage_util import upload_room_file
-        with open(index_path, "rb") as f:
-            upload_room_file(room_code, index_filename, f.read())
-        print(f"Index pickle file '{index_filename}' backed up to Supabase storage.")
+        index_filename = f"{room_code}_index.pkl" if room_code != "default" else "study_index.pkl"
+        index_path = Path(__file__).parent / index_filename
+        index_data = {
+            "embeddings": embeddings.astype(np.float32),
+            "chunks": chunks,
+            "embed_model": EMBED_MODEL_NAME,
+            "room_code": room_code
+        }
+        with open(index_path, "wb") as f:
+            pickle.dump(index_data, f)
+        print(f"Local index saved to '.pkl' file at '{index_path}'.")
+
+        # 1b. Backup .pkl index file to Supabase storage for cloud persistence
+        try:
+            from supabase_storage_util import upload_room_file
+            with open(index_path, "rb") as f:
+                upload_room_file(room_code, index_filename, f.read())
+            print(f"Index pickle file '{index_filename}' backed up to Supabase storage.")
+        except Exception as e:
+            print(f"Note: Cloud pickle backup skipped ({e}). Operating in pure cloud vector mode.")
     except Exception as e:
-        print(f"Note: Cloud pickle backup skipped ({e}). Operating in local .pkl mode.")
+        print(f"Note: Local disk pickle file write skipped ({e}). Operating in pure cloud vector mode.")
 
     # 2. Sync to Supabase pgvector if configured
     try:
