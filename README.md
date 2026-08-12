@@ -41,7 +41,7 @@ This will:
 - Read all files in `study_materials/`
 - Split them into chunks
 - Create embeddings
-- Save an index file `study_index.pkl`
+- Save index and document embeddings to Supabase pgvector database (`documents` table)
 
 ### 4. Set your Groq API key
 

@@ -13,11 +13,11 @@ import nest_asyncio
 from llama_parse import LlamaParse
 from openai import OpenAI
 from dotenv import load_dotenv
+import re
 
 load_dotenv()
 
 STUDY_DIR = Path(os.environ.get("STUDY_DIR", Path(__file__).parent / "study_materials"))
-INDEX_PATH = Path(os.environ.get("INDEX_PATH", Path(__file__).parent / "study_index.pkl"))
 EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_CHAT_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
@@ -66,39 +66,99 @@ def read_pdf(path: Path) -> List[Tuple[int, str]]:
     except Exception:
         pass
         
-    if not api_key:
-        raise ValueError("LLAMA_CLOUD_API_KEY is missing. Please add it to Streamlit Secrets or .env file.")
-        
-    print(f"Parsing {path.name} with LlamaParse...")
-    parser = LlamaParse(
-        api_key=api_key,
-        result_type="markdown",
-        verbose=True
-    )
-    
-    documents = parser.load_data(str(path))
-    
     pages: List[Tuple[int, str]] = []
-    for i, doc in enumerate(documents):
-        pages.append((i + 1, doc.text))
-        
+    
+    if api_key:
+        try:
+            print(f"Parsing {path.name} with LlamaParse...")
+            parser = LlamaParse(
+                api_key=api_key,
+                result_type="markdown",
+                premium_mode=True,
+                verbose=True
+            )
+            
+            documents = parser.load_data(str(path))
+            
+            for i, doc in enumerate(documents):
+                if doc.text and doc.text.strip():
+                    pages.append((i + 1, doc.text))
+        except Exception as e:
+            print(f"LlamaParse failed for {path.name}: {e}. Falling back to PyPDF2...")
+            try:
+                import streamlit as st
+                st.warning(f"LlamaParse OCR failed for {path.name}: {e}. Falling back to basic text extraction (which may not work for scanned images).")
+            except Exception:
+                pass
+            pages = []
+            
+    if not pages:
+        print(f"Parsing {path.name} with PyPDF2 (Fallback)...")
+        import PyPDF2
+        try:
+            with open(path, "rb") as f:
+                reader = PyPDF2.PdfReader(f)
+                for i in range(len(reader.pages)):
+                    page = reader.pages[i]
+                    text = page.extract_text()
+                    if text and text.strip():
+                        pages.append((i + 1, text))
+        except Exception as e:
+            print(f"PyPDF2 failed for {path.name}: {e}")
+            
     return pages
 
 
 def chunk_text(text: str, max_tokens: int = 512, overlap: int = 128) -> List[str]:
-    # Very rough token approximation using words
-    words = text.split()
-    if not words:
-        return []
+    # Sentence-aware chunking
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+    
+    if not sentences:
+        words = text.split()
+        if not words:
+            return []
+        chunks = []
+        start = 0
+        step = max_tokens - overlap
+        while start < len(words):
+            chunks.append(" ".join(words[start:start + max_tokens]))
+            start += step
+        return chunks
 
-    chunks: List[str] = []
-    start = 0
-    step = max_tokens - overlap
-    while start < len(words):
-        end = start + max_tokens
-        chunk_words = words[start:end]
-        chunks.append(" ".join(chunk_words))
-        start += step
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    
+    i = 0
+    while i < len(sentences):
+        sentence = sentences[i]
+        sentence_len = len(sentence.split())
+        
+        if current_length + sentence_len > max_tokens and current_chunk:
+            chunks.append(" ".join(current_chunk))
+            
+            # Calculate overlap
+            overlap_words = 0
+            overlap_sentences = []
+            for s in reversed(current_chunk):
+                s_len = len(s.split())
+                if overlap_words + s_len <= overlap:
+                    overlap_sentences.insert(0, s)
+                    overlap_words += s_len
+                else:
+                    break
+            
+            current_chunk = overlap_sentences
+            current_length = sum(len(s.split()) for s in current_chunk)
+        
+        current_chunk.append(sentence)
+        current_length += sentence_len
+        i += 1
+        
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+        
     return chunks
 
 
@@ -127,13 +187,13 @@ def get_embedder() -> SentenceTransformer:
     return SentenceTransformer(EMBED_MODEL_NAME)
 
 
-def ingest(study_dir: Path = None, index_path: Path = None) -> None:
+def ingest(study_dir: Path = None, room_code: str = "default") -> None:
     if study_dir is None:
         study_dir = STUDY_DIR
-    if index_path is None:
-        index_path = INDEX_PATH
-        
-    print(f"Loading study materials from '{study_dir}'...")
+    if not room_code:
+        room_code = "default"
+
+    print(f"Loading study materials from '{study_dir}' for room '{room_code}'...")
     chunks = build_chunks(study_dir)
     print(f"Found {len(chunks)} text chunks. Computing embeddings...")
 
@@ -141,61 +201,141 @@ def ingest(study_dir: Path = None, index_path: Path = None) -> None:
     texts = [c.text for c in chunks]
     embeddings = embedder.encode(texts, show_progress_bar=True, convert_to_numpy=True)
 
+    # 1. Save local pickle file (.pkl)
+    index_filename = f"{room_code}_index.pkl" if room_code != "default" else "study_index.pkl"
+    index_path = Path(__file__).parent / index_filename
     index_data = {
         "embeddings": embeddings.astype(np.float32),
         "chunks": chunks,
         "embed_model": EMBED_MODEL_NAME,
+        "room_code": room_code
     }
-
-    with index_path.open("wb") as f:
+    with open(index_path, "wb") as f:
         pickle.dump(index_data, f)
+    print(f"Local index saved to '.pkl' file at '{index_path}'.")
 
-    print(f"Index saved to '{index_path}'. You can now run in chat mode.")
+    # 1b. Backup .pkl index file to Supabase storage for cloud persistence
+    try:
+        from supabase_storage_util import upload_room_file
+        with open(index_path, "rb") as f:
+            upload_room_file(room_code, index_filename, f.read())
+        print(f"Index pickle file '{index_filename}' backed up to Supabase storage.")
+    except Exception as e:
+        print(f"Note: Cloud pickle backup skipped ({e}). Operating in local .pkl mode.")
 
-
-def load_index(index_path: Path = None):
-    if index_path is None:
-        index_path = INDEX_PATH
+    # 2. Sync to Supabase pgvector if configured
+    try:
+        from supabase_storage_util import get_supabase
+        client = get_supabase()
         
-    if not index_path.exists():
-        raise FileNotFoundError(
-            f"Index file '{index_path}' not found. Run with 'ingest' first."
-        )
-    with index_path.open("rb") as f:
-        index_data = pickle.load(f)
+        # Delete existing vectors for this room before re-inserting
+        client.table("documents").delete().eq("room_code", room_code).execute()
+        
+        batch_data = []
+        for chunk, emb in zip(chunks, embeddings):
+            batch_data.append({
+                "room_code": room_code,
+                "source": chunk.source,
+                "page": chunk.page,
+                "content": chunk.text,
+                "embedding": emb.tolist()
+            })
+            
+        # Insert in batches
+        for i in range(0, len(batch_data), 100):
+            client.table("documents").insert(batch_data[i:i+100]).execute()
 
-    if index_data.get("embed_model") != EMBED_MODEL_NAME:
-        print(
-            "Warning: index was built with a different embedding model. "
-            "Consider re-running ingest."
-        )
-    return index_data
+        print(f"Index synced successfully to Supabase pgvector for room '{room_code}'.")
+    except Exception as e:
+        print(f"Note: Supabase database sync skipped ({e}). Operating in local .pkl mode.")
 
 
-def retrieve(query: str, k: int = 5, allowed_sources: Optional[List[str]] = None, index_path: Path = None) -> List[Chunk]:
-    index = load_index(index_path)
-    embeddings: np.ndarray = index["embeddings"]
-    chunks: List[Chunk] = index["chunks"]
+def retrieve(query: str, k: int = 5, room_code: str = "default") -> List[Chunk]:
+    if not room_code:
+        room_code = "default"
 
     embedder = get_embedder()
-    query_emb = embedder.encode([query], convert_to_numpy=True)
+    query_emb = embedder.encode([query], convert_to_numpy=True)[0]
 
-    sims = cosine_similarity(query_emb, embeddings)[0]
-    top_indices = np.argsort(sims)[::-1]
+    # 1. Try Supabase pgvector retrieval first
+    try:
+        from supabase_storage_util import get_supabase
+        client = get_supabase()
+        
+        res = client.rpc(
+            "match_documents",
+            {
+                "query_embedding": query_emb.tolist(),
+                "match_threshold": 0.0,
+                "match_count": k,
+                "room_code_filter": room_code
+            }
+        ).execute()
+        
+        if res.data:
+            top_chunks = []
+            for row in res.data:
+                top_chunks.append(Chunk(text=row["content"], source=row["source"], page=row["page"]))
+            return top_chunks
+    except Exception as e:
+        pass  # Fall back to local pickle file search below
+
+    # 2. Fallback to local .pkl file vector search
+    index_filename = f"{room_code}_index.pkl" if room_code != "default" else "study_index.pkl"
+    index_path = Path(__file__).parent / index_filename
+    
+    # If local index is missing, attempt to restore from Supabase Storage
+    if not index_path.exists() and room_code != "default":
+        try:
+            from supabase_storage_util import download_room_file
+            content = download_room_file(room_code, index_filename, silent=True)
+            if content:
+                with open(index_path, "wb") as f:
+                    f.write(content)
+                print(f"Restored index pickle file '{index_filename}' from Supabase storage.")
+        except Exception as e:
+            print(f"Could not restore index pickle file from Supabase storage: {e}")
+
+    if not index_path.exists():
+        index_path = Path(__file__).parent / "study_index.pkl"
+
+    # 3. Real-Time On-Demand Auto-Ingest: If index STILL does not exist, build it in real-time from room files!
+    if not index_path.exists() and room_code != "default":
+        try:
+            print(f"No existing .pkl index found for room '{room_code}'. Initiating real-time index generation...")
+            import tempfile
+            from supabase_storage_util import download_all_room_files
+            with tempfile.TemporaryDirectory() as tmpdir:
+                local_dir = Path(tmpdir)
+                downloaded = download_all_room_files(room_code, str(local_dir))
+                if downloaded:
+                    ingest(study_dir=local_dir, room_code=room_code)
+                    target_pkl = Path(__file__).parent / index_filename
+                    if target_pkl.exists():
+                        index_path = target_pkl
+        except Exception as e:
+            print(f"Real-time index generation failed: {e}")
+
+    if not index_path.exists():
+        raise FileNotFoundError(
+            f"No index found in Supabase pgvector or local pickle file '{index_path}'. "
+            f"Please ensure study materials are uploaded to room '{room_code}'."
+        )
+
+    with open(index_path, "rb") as f:
+        index_data = pickle.load(f)
+
+    embeddings: np.ndarray = index_data["embeddings"]
+    chunks: List[Chunk] = index_data["chunks"]
+
+    sims = cosine_similarity([query_emb], embeddings)[0]
+    top_indices = np.argsort(sims)[::-1][:k]
 
     top_chunks: List[Chunk] = []
     for idx in top_indices:
         if sims[idx] <= 0:
             continue
-            
-        chunk = chunks[int(idx)]
-        if allowed_sources is not None and chunk.source not in allowed_sources:
-            continue
-            
-        top_chunks.append(chunk)
-        if len(top_chunks) >= k:
-            break
-            
+        top_chunks.append(chunks[int(idx)])
     return top_chunks
 
 
@@ -225,28 +365,37 @@ def get_groq_client() -> OpenAI:
 
 def answer_question(question: str, chunks: List[Chunk]) -> str:
     context = build_context(chunks)
-    if not context:
-        return "the study material not found"
 
     client = get_groq_client()
 
-    system_prompt = (
-        "You are a friendly, conversational, and highly intelligent study tutor. "
-        "Your goal is to explain concepts clearly, breaking them down so they are easy to understand, as if you are having a one-on-one conversation with a student. "
-        "You must base your explanations ONLY on the provided study material excerpts. "
-        "Structure your answers to be highly readable and well-formatted using Markdown (headings, bullet points, italics, bold text). "
-        "Speak directly to the user (e.g., 'Sure, let's break that down!', 'Here's how it works:'). "
-        "Do NOT mention the names of the source files, filenames, or page numbers in your response. "
-        "If the answer to the question is not clearly supported by the material, explicitly state EXACTLY: "
-        "'the study material not found'. "
-        "Do not use outside knowledge."
-    )
+    if context:
+        system_prompt = (
+            "You are a friendly, conversational, and highly intelligent study tutor. "
+            "Your goal is to explain concepts clearly, breaking them down so they are easy to understand, as if you are having a one-on-one conversation with a student. "
+            "You have access to some study material excerpts. If they are helpful, use them to answer the question. "
+            "If the excerpts do not contain the answer, use your general knowledge to answer the question accurately. "
+            "Structure your answers to be highly readable and well-formatted using Markdown (headings, bullet points, italics, bold text). "
+            "Speak directly to the user (e.g., 'Sure, let's break that down!', 'Here's how it works:'). "
+            "Do NOT mention the names of the source files, filenames, or page numbers in your response."
+        )
 
-    user_prompt = (
-        f"Study material excerpts:\n\n{context}\n\n"
-        f"Question: {question}\n\n"
-        "Explain the answer in a clear, conversational, and easy-to-understand way, using only the excerpts above. Speak directly to me like a tutor. Do NOT mention which study material or page was used. If it cannot be answered from the excerpts, output EXACTLY 'the study material not found'."
-    )
+        user_prompt = (
+            f"Study material excerpts:\n\n{context}\n\n"
+            f"Question: {question}\n\n"
+            "Explain the answer in a clear, conversational, and easy-to-understand way. Speak directly to me like a tutor. Do NOT mention which study material or page was used."
+        )
+    else:
+        system_prompt = (
+            "You are a friendly, conversational, and highly intelligent study tutor. "
+            "Your goal is to explain concepts clearly, breaking them down so they are easy to understand, as if you are having a one-on-one conversation with a student. "
+            "Structure your answers to be highly readable and well-formatted using Markdown. "
+            "Speak directly to the user."
+        )
+
+        user_prompt = (
+            f"Question: {question}\n\n"
+            "Explain the answer in a clear, conversational, and easy-to-understand way. Speak directly to me like a tutor."
+        )
 
     completion = client.chat.completions.create(
         model=GROQ_CHAT_MODEL,
@@ -262,6 +411,11 @@ def answer_question(question: str, chunks: List[Chunk]) -> str:
 
 def chat_loop() -> None:
     print("Study Material Assistant (RAG)")
+    room_code = input("Enter room code to chat with: ").strip()
+    if not room_code:
+        print("Room code is required.")
+        return
+        
     print("Type your question, or 'exit' to quit.\n")
 
     while True:
@@ -278,7 +432,7 @@ def chat_loop() -> None:
             break
 
         try:
-            chunks = retrieve(question, k=5)
+            chunks = retrieve(question, k=5, room_code=room_code)
             answer = answer_question(question, chunks)
         except Exception as e:
             print(f"Error: {e}")
@@ -300,7 +454,8 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.command == "ingest":
-        ingest()
+        room_code = input("Enter room code: ").strip()
+        ingest(study_dir=STUDY_DIR, room_code=room_code)
     elif args.command == "chat":
         chat_loop()
 

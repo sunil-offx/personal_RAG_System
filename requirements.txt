@@ -8,6 +8,7 @@ python-dotenv>=1.0.0
 streamlit>=1.35.0
 firebase-admin>=7.4.0
 extra-streamlit-components>=0.1.71
+streamlit-option-menu>=0.3.12
 supabase>=2.3.0
 anyio<4.0.0
 nest_asyncio
@@ -15,5 +16,6 @@ torchvision
 fpdf2
 google-api-python-client
 google-auth-httplib2
-google-auth-oauthlibfastapi
+google-auth-oauthlib
+fastapi
 uvicorn

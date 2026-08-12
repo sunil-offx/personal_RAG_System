@@ -2,7 +2,10 @@ import os
 import streamlit as st
 from supabase import create_client, Client, ClientOptions
 
+_BUCKET_CHECKED = False
+
 def get_supabase() -> Client:
+    global _BUCKET_CHECKED
     # Use secrets if available, else environment variables
     try:
         if hasattr(st, "secrets") and "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
@@ -18,7 +21,18 @@ def get_supabase() -> Client:
         
     if not url or not key:
         raise ValueError("Missing Supabase credentials.")
-    return create_client(url, key, options=ClientOptions(storage_client_timeout=120, postgrest_client_timeout=120))
+    client = create_client(url, key, options=ClientOptions(storage_client_timeout=120, postgrest_client_timeout=120))
+    
+    if not _BUCKET_CHECKED:
+        try:
+            buckets = client.storage.list_buckets()
+            if not any(b.name == "study-materials" for b in buckets):
+                client.storage.create_bucket("study-materials")
+            _BUCKET_CHECKED = True
+        except Exception:
+            pass
+            
+    return client
 
 def list_user_files(username: str):
     """List all files in the user's directory."""
@@ -61,7 +75,7 @@ def delete_file(username: str, filename: str):
     client.storage.from_("study-materials").remove([path])
 
 def download_all_user_files(username: str, local_dir: str):
-    """Download all files (except index.pkl) to a local directory for indexing."""
+    """Download all study files (except .pkl index files) to a local directory for indexing."""
     client = get_supabase()
     prefix = f"{username}/"
     
@@ -74,7 +88,7 @@ def download_all_user_files(username: str, local_dir: str):
     if isinstance(res, list):
         for item in res:
             fname = item.get("name")
-            if fname and fname != ".emptyFolderPlaceholder" and fname != "index.pkl":
+            if fname and fname != ".emptyFolderPlaceholder" and not fname.endswith(".pkl"):
                 local_path = os.path.join(local_dir, fname)
                 content = download_file(username, fname)
                 if content:
@@ -98,19 +112,29 @@ def list_room_files(room_code: str):
 def upload_room_file(room_code: str, filename: str, content: bytes):
     client = get_supabase()
     path = f"rooms/{room_code}/{filename}"
-    client.storage.from_("study-materials").remove([path])
+    try:
+        client.storage.from_("study-materials").remove([path])
+    except Exception:
+        pass
     res = client.storage.from_("study-materials").upload(file=content, path=path, file_options={"content-type": "application/octet-stream"})
+    return res
 
-def download_room_file(room_code: str, filename: str) -> bytes:
+def download_room_file(room_code: str, filename: str, silent: bool = False) -> bytes:
     client = get_supabase()
     path = f"rooms/{room_code}/{filename}"
     try:
         res = client.storage.from_("study-materials").download(path)
         return res
     except Exception as e:
-        import streamlit as st
-        st.error(f"Failed to download '{filename}': {e}")
+        if not silent:
+            try:
+                import streamlit as st
+                st.error(f"Failed to download '{filename}': {e}")
+            except Exception:
+                pass
         return None
+
+
 
 def delete_room_file(room_code: str, filename: str):
     client = get_supabase()
@@ -127,11 +151,18 @@ def download_all_room_files(room_code: str, local_dir: str):
     if isinstance(res, list):
         for item in res:
             fname = item.get("name")
-            if fname and fname != ".emptyFolderPlaceholder" and fname != "index.pkl":
+            if fname and fname != ".emptyFolderPlaceholder" and not fname.endswith(".pkl"):
                 local_path = os.path.join(local_dir, fname)
-                content = download_room_file(room_code, fname)
+                content = download_room_file(room_code, fname, silent=True)
                 if content:
                     with open(local_path, "wb") as f:
                         f.write(content)
                     downloaded_files.append(fname)
     return downloaded_files
+
+def delete_all_room_files(room_code: str):
+    client = get_supabase()
+    files = list_room_files(room_code)
+    paths_to_remove = [f"rooms/{room_code}/{f}" for f in files]
+    if paths_to_remove:
+        client.storage.from_("study-materials").remove(paths_to_remove)

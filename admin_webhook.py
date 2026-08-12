@@ -16,9 +16,23 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "myadminsecret")
 security = HTTPBasic()
 
 def get_current_admin(credentials: HTTPBasicCredentials = Security(security)):
-    is_correct_username = secrets.compare_digest(credentials.username, ADMIN_EMAIL)
-    is_correct_password = secrets.compare_digest(credentials.password, ADMIN_PASSWORD)
-    if not (is_correct_username and is_correct_password):
+    is_correct = False
+    
+    # Check default admin
+    if secrets.compare_digest(credentials.username, ADMIN_EMAIL) and secrets.compare_digest(credentials.password, ADMIN_PASSWORD):
+        is_correct = True
+    
+    # Check additional 8 admins
+    if not is_correct:
+        for i in range(1, 9):
+            adm_email = os.environ.get(f"ADMIN_EMAIL_{i}")
+            adm_password = os.environ.get(f"ADMIN_PASSWORD_{i}")
+            if adm_email and adm_password:
+                if secrets.compare_digest(credentials.username, adm_email) and secrets.compare_digest(credentials.password, adm_password):
+                    is_correct = True
+                    break
+
+    if not is_correct:
         raise HTTPException(
             status_code=403, 
             detail="Could not validate credentials"
@@ -43,8 +57,25 @@ async def process_admin_webhook(payload: WebhookPayload, username: str = Securit
     
     # Example logic based on action type
     if action == "rebuild_index":
-        # Call your ingest logic here
-        return {"status": "success", "message": "Index rebuild triggered"}
+        room_code = "default"
+        if payload.data and "room_code" in payload.data:
+            room_code = payload.data["room_code"]
+        
+        try:
+            import tempfile
+            from pathlib import Path
+            from rag_study_assistant import ingest
+            import supabase_storage_util
+            
+            with tempfile.TemporaryDirectory() as tmpdir:
+                local_dir = Path(tmpdir)
+                downloaded = supabase_storage_util.download_all_room_files(room_code, str(local_dir))
+                if not downloaded:
+                    return {"status": "warning", "message": f"No files found to index for room '{room_code}'"}
+                ingest(study_dir=local_dir, room_code=room_code)
+            return {"status": "success", "message": f"Index rebuilt successfully for room '{room_code}'"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to rebuild index: {e}")
         
     elif action == "delete_user":
         user_email = payload.email

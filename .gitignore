@@ -13,3 +13,5 @@ firebase_key.json
 token.pickle
 .oauth_state.json
 .streamlit/secrets.toml
+*.pkl
+*.pdf
