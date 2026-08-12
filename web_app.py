@@ -503,11 +503,13 @@ def ensure_user_signed_in():
         background: transparent !important;
         border: none !important;
         color: #0EA5E9 !important;
-        font-size: 0.88rem !important;
-        padding: 2px 8px !important;
+        font-size: 0.9rem !important;
+        padding: 4px 10px !important;
         text-decoration: underline !important;
         box-shadow: none !important;
-        min-height: unset !important;
+        white-space: nowrap !important;
+        width: 100% !important;
+        text-align: center !important;
     }
     .stButton > button[kind="secondary"]:hover {
         color: #38BDF8 !important;
@@ -535,7 +537,7 @@ def ensure_user_signed_in():
             st.markdown("<h4 style='text-align:center; color:#F0F6FF; margin-bottom:1rem;'>Create an Account</h4>", unsafe_allow_html=True)
             email = st.text_input("Email", placeholder="you@example.com")
             password = st.text_input("Password", type="password", placeholder="••••••••")
-            submitted = st.form_submit_button("Sign Up", use_container_width=True, type="primary")
+            submitted = st.form_submit_button("Create Account", use_container_width=True, type="primary")
             if submitted:
                 if not email or not password:
                     st.error("Please enter email and password.")
@@ -572,16 +574,14 @@ def ensure_user_signed_in():
                         st.error("Invalid credentials.")
 
     # Links below the form
-    c1, c2 = st.columns(2)
-    with c1:
-        if mode == "signup":
-            if st.button("Already have an account? Sign In", key="go_signin"):
-                st.session_state["login_mode"] = "signin"
-                st.rerun()
-        else:
-            if st.button("Need an account? Sign Up", key="go_signup"):
-                st.session_state["login_mode"] = "signup"
-                st.rerun()
+    if mode == "signup":
+        if st.button("Already have an account? Sign In", key="go_signin", use_container_width=True):
+            st.session_state["login_mode"] = "signin"
+            st.rerun()
+    else:
+        if st.button("Need an account? Create an Account", key="go_signup", use_container_width=True):
+            st.session_state["login_mode"] = "signup"
+            st.rerun()
                 
     st.markdown(
         "<p style='text-align:center; color:#64748b; font-size:0.78rem; margin-top:0.8rem;'>"
