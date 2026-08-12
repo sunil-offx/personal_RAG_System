@@ -386,17 +386,41 @@ def ensure_user_signed_in():
         st.session_state["login_mode"] = "signin"
     mode = st.session_state["login_mode"]
 
-    # ── CSS with animations ──────────────────────────────────────────────────
+    # ── CSS with animations & viewport centering ────────────────────────────
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    html, body { 
+        font-family: 'Inter', sans-serif;
+        height: 100vh !important;
+        overflow: hidden !important;
+    }
 
     .stApp {
-        background: linear-gradient(135deg, #e8f4fd 0%, #f0f7ff 50%, #e8f0fe 100%);
-        min-height: 100vh;
+        background: linear-gradient(135deg, #070B15 0%, #0F172A 50%, #1E3A8A 100%) !important;
+        height: 100vh !important;
+        overflow: hidden !important;
     }
-    [data-testid="stHeader"], [data-testid="stToolbar"] { display: none; }
+
+    [data-testid="stHeader"], [data-testid="stToolbar"] { display: none !important; }
+
+    /* Center main block container vertically & horizontally */
+    [data-testid="stMainBlockContainer"] {
+        padding-top: 2rem !important;
+        padding-bottom: 2rem !important;
+        max-width: 520px !important;
+        margin: auto !important;
+    }
+
+    /* Card Box Container */
+    [data-testid="stForm"] {
+        background: rgba(15, 23, 42, 0.85) !important;
+        border: 1px solid rgba(14, 165, 233, 0.4) !important;
+        border-radius: 16px !important;
+        padding: 2rem 1.8rem !important;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(14, 165, 233, 0.15) !important;
+        backdrop-filter: blur(10px) !important;
+    }
 
     /* ── Animations ─────────────────────────────────────────────────────── */
     @keyframes bounceIn {
@@ -413,13 +437,9 @@ def ensure_user_signed_in():
         0%   { transform: translateY(20px); opacity: 0; }
         100% { transform: translateY(0); opacity: 1; }
     }
-    @keyframes shimmer {
-        0%   { background-position: -200% center; }
-        100% { background-position: 200% center; }
-    }
     @keyframes pulseGlow {
-        0%, 100% { box-shadow: 0 4px 18px rgba(14,165,233,0.35); }
-        50%      { box-shadow: 0 6px 30px rgba(14,165,233,0.6); }
+        0%, 100% { box-shadow: 0 4px 18px rgba(37, 99, 235, 0.4); }
+        50%      { box-shadow: 0 6px 28px rgba(14, 165, 233, 0.6); }
     }
 
     .login-logo {
@@ -432,155 +452,142 @@ def ensure_user_signed_in():
         animation: fadeInUp 0.5s ease-out 0.4s both;
     }
 
-    /* Staggered form field animations */
-    [data-testid="stMainBlockContainer"] div[data-testid="stTextInput"]:nth-of-type(1) {
-        animation: fadeInUp 0.4s ease-out 0.5s both;
-    }
-    [data-testid="stMainBlockContainer"] div[data-testid="stTextInput"]:nth-of-type(2) {
-        animation: fadeInUp 0.4s ease-out 0.65s both;
-    }
-
     /* Labels */
     div[data-testid="stTextInput"] label,
     div[data-testid="stTextInput"] label p {
-        color: #000000 !important;
+        color: #F0F6FF !important;
+        font-weight: 500 !important;
     }
 
     /* Inputs */
     div[data-testid="stTextInput"] input {
-        background: #ffffff !important;
-        border: 1.5px solid #7dd3fc !important;
+        background: rgba(15, 23, 42, 0.9) !important;
+        border: 1px solid rgba(37, 99, 235, 0.6) !important;
         border-radius: 10px !important;
-        color: #000000 !important;
+        color: #F0F6FF !important;
         font-size: 0.95rem;
         padding: 10px 14px;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.04) !important;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        transition: all 0.3s ease;
     }
     div[data-testid="stTextInput"] input:focus {
-        border-color: #0ea5e9 !important;
-        box-shadow: 0 0 0 3px rgba(14,165,233,0.15) !important;
+        border-color: #0EA5E9 !important;
+        box-shadow: 0 0 12px rgba(14, 165, 233, 0.4) !important;
         outline: none;
-        transform: scale(1.01);
     }
 
-    /* Primary button — shimmer + pulse */
+    /* Checkbox */
+    div[data-testid="stCheckbox"] label p {
+        color: #94A3B8 !important;
+        font-size: 0.85rem !important;
+    }
+
+    /* Primary button */
     .stButton > button[kind="primary"] {
-        background: linear-gradient(90deg, #0ea5e9, #38bdf8, #7dd3fc, #38bdf8, #0ea5e9) !important;
-        background-size: 200% auto !important;
+        background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 50%, #0EA5E9 100%) !important;
         color: white !important;
         border: none !important;
-        border-radius: 12px !important;
+        border-radius: 10px !important;
         font-size: 1rem !important;
         font-weight: 600 !important;
-        box-shadow: 0 4px 18px rgba(14,165,233,0.35);
-        transition: all 0.3s;
-        animation: shimmer 3s linear infinite, pulseGlow 2s ease-in-out infinite, fadeInUp 0.4s ease-out 0.8s both;
+        transition: all 0.3s ease;
+        animation: pulseGlow 2s ease-in-out infinite;
     }
     .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(90deg, #0284c7, #0ea5e9, #38bdf8, #0ea5e9, #0284c7) !important;
-        box-shadow: 0 8px 32px rgba(14,165,233,0.6);
-        transform: translateY(-2px) scale(1.02);
-    }
-    .stButton > button[kind="primary"]:active {
-        transform: translateY(0) scale(0.98);
+        background: linear-gradient(135deg, #2563EB 0%, #0EA5E9 100%) !important;
+        box-shadow: 0 8px 25px rgba(14, 165, 233, 0.6) !important;
+        transform: translateY(-2px);
     }
 
-    /* Link-style small buttons */
+    /* Link-style secondary button */
     .stButton > button[kind="secondary"] {
         background: transparent !important;
         border: none !important;
-        color: #0ea5e9 !important;
+        color: #0EA5E9 !important;
         font-size: 0.88rem !important;
         padding: 2px 8px !important;
         text-decoration: underline !important;
         box-shadow: none !important;
         min-height: unset !important;
-        transition: all 0.2s;
-        animation: fadeInUp 0.4s ease-out 0.7s both;
     }
     .stButton > button[kind="secondary"]:hover {
-        color: #0284c7 !important;
+        color: #38BDF8 !important;
         background: transparent !important;
-        transform: scale(1.05);
     }
     </style>
     """, unsafe_allow_html=True)
 
     # ── Animated centered header ──────────────────────────────────────────────
     st.markdown("""
-    <div style="text-align:center; padding: 3.5rem 0 2rem 0;">
-      <div class="login-logo" style="font-size:3.8rem; margin-bottom:0.6rem;">📚</div>
-      <div class="login-title" style="font-size:2.1rem; font-weight:700; color:#0ea5e9; letter-spacing:-0.5px; line-height:1.2;">
+    <div style="text-align:center; padding: 1rem 0 1.2rem 0;">
+      <div class="login-logo" style="font-size:3.2rem; margin-bottom:0.4rem;">📚</div>
+      <div class="login-title" style="font-size:1.9rem; font-weight:700; color:#0ea5e9; letter-spacing:-0.5px; line-height:1.2;">
         Study Material Assistant
       </div>
-      <div class="login-subtitle" style="font-size:0.97rem; color:#64748b; margin-top:0.4rem;">
+      <div class="login-subtitle" style="font-size:0.92rem; color:#94a3b8; margin-top:0.3rem;">
         Your AI-powered RAG learning companion
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Centered form ─────────────────────────────────────────────────────────
-    _, col, _ = st.columns([1, 2, 1])
-    with col:
-        with st.form("auth_form", clear_on_submit=False):
-            if mode == "signup":
-                st.markdown("<h4 style='text-align:center; color:#334155; margin-bottom:1rem;'>Create an Account</h4>", unsafe_allow_html=True)
-                email = st.text_input("Email", placeholder="you@example.com")
-                password = st.text_input("Password", type="password", placeholder="••••••••")
-                submitted = st.form_submit_button("Sign Up", use_container_width=True, type="primary")
-                if submitted:
-                    if not email or not password:
-                        st.error("Please enter email and password.")
+    # ── Centered form container ───────────────────────────────────────────────
+    with st.form("auth_form", clear_on_submit=False):
+        if mode == "signup":
+            st.markdown("<h4 style='text-align:center; color:#F0F6FF; margin-bottom:1rem;'>Create an Account</h4>", unsafe_allow_html=True)
+            email = st.text_input("Email", placeholder="you@example.com")
+            password = st.text_input("Password", type="password", placeholder="••••••••")
+            submitted = st.form_submit_button("Sign Up", use_container_width=True, type="primary")
+            if submitted:
+                if not email or not password:
+                    st.error("Please enter email and password.")
+                else:
+                    success = create_user(email, password)
+                    if success:
+                        st.success("Account created! You can now log in.")
+                        st.session_state["login_mode"] = "signin"
+                        st.rerun()
                     else:
-                        success = create_user(email, password)
-                        if success:
-                            st.success("Account created! You can now log in.")
-                            st.session_state["login_mode"] = "signin"
-                            st.rerun()
+                        st.error("Account already exists or error occurred.")
+        else:
+            st.markdown("<h4 style='text-align:center; color:#F0F6FF; margin-bottom:1rem;'>Welcome Back</h4>", unsafe_allow_html=True)
+            email = st.text_input("Email", placeholder="you@example.com")
+            password = st.text_input("Password", type="password", placeholder="••••••••")
+            remember_me = st.checkbox("Remember me for 30 days", value=True)
+            submitted = st.form_submit_button("Sign In", use_container_width=True, type="primary")
+            if submitted:
+                if not email or not password:
+                    st.error("Please enter email and password.")
+                else:
+                    success, user_email = authenticate_user(email, password)
+                    if success:
+                        st.session_state["username"] = user_email
+                        st.session_state["is_admin"] = check_is_admin(user_email)
+                        st.session_state["signed_in_expires"] = now + timedelta(days=30)
+                        cm = get_cookie_manager()
+                        if remember_me:
+                            cm.set("auth_username", user_email, expires_at=now + timedelta(days=30))
                         else:
-                            st.error("Account already exists or error occurred.")
-            else:
-                st.markdown("<h4 style='text-align:center; color:#334155; margin-bottom:1rem;'>Welcome Back</h4>", unsafe_allow_html=True)
-                email = st.text_input("Email", placeholder="you@example.com")
-                password = st.text_input("Password", type="password", placeholder="••••••••")
-                remember_me = st.checkbox("Remember me for 30 days", value=True)
-                submitted = st.form_submit_button("Sign In", use_container_width=True, type="primary")
-                if submitted:
-                    if not email or not password:
-                        st.error("Please enter email and password.")
+                            cm.delete("auth_username")
+                        st.rerun()
                     else:
-                        success, user_email = authenticate_user(email, password)
-                        if success:
-                            st.session_state["username"] = user_email
-                            st.session_state["is_admin"] = check_is_admin(user_email)
-                            st.session_state["signed_in_expires"] = now + timedelta(days=30)
-                            cm = get_cookie_manager()
-                            if remember_me:
-                                cm.set("auth_username", user_email, expires_at=now + timedelta(days=30))
-                            else:
-                                cm.delete("auth_username")
-                            st.rerun()
-                        else:
-                            st.error("Invalid credentials.")
+                        st.error("Invalid credentials.")
 
-        # Links below the form
-        c1, c2 = st.columns(2)
-        with c1:
-            if mode == "signup":
-                if st.button("Already have an account? Sign In", key="go_signin"):
-                    st.session_state["login_mode"] = "signin"
-                    st.rerun()
-            else:
-                if st.button("Need an account? Sign Up", key="go_signup"):
-                    st.session_state["login_mode"] = "signup"
-                    st.rerun()
-                    
-        st.markdown(
-            "<p style='text-align:center; color:#94a3b8; font-size:0.78rem; margin-top:1.2rem;'>"
-            "🔒 Your files are securely stored</p>",
-            unsafe_allow_html=True,
-        )
+    # Links below the form
+    c1, c2 = st.columns(2)
+    with c1:
+        if mode == "signup":
+            if st.button("Already have an account? Sign In", key="go_signin"):
+                st.session_state["login_mode"] = "signin"
+                st.rerun()
+        else:
+            if st.button("Need an account? Sign Up", key="go_signup"):
+                st.session_state["login_mode"] = "signup"
+                st.rerun()
+                
+    st.markdown(
+        "<p style='text-align:center; color:#64748b; font-size:0.78rem; margin-top:0.8rem;'>"
+        "🔒 Your files are securely stored</p>",
+        unsafe_allow_html=True,
+    )
 
     st.stop()
 
