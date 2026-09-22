@@ -47,69 +47,148 @@ import guardrails
 import audit_chain
 import ragas_evaluator
 
-# ── Firebase / Firestore setup ─────────────────────────────────────────────────
+# ── Firebase / Firestore setup & Resilient Local Storage Fallbacks ────────────
+USERS_LOCAL_FILE = "users_local.json"
+ADMIN_LOGINS_LOCAL_FILE = "admin_logins_local.json"
+ROOMS_LOCAL_FILE = "rooms_local.json"
+ADMIN_PROFILES_LOCAL_FILE = "admin_profiles_local.json"
+UPLOADS_LOCAL_FILE = "uploads_local.json"
+HISTORY_LOCAL_FILE = "history_local.json"
+ROOM_VISITS_LOCAL_FILE = "room_visits_local.json"
+STUDENT_QUERIES_LOCAL_FILE = "student_queries_local.json"
+
+def _load_json_data(filepath: str, default):
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return default
+    return default
+
+def _save_json_data(filepath: str, data):
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+def _load_local_users() -> dict:
+    return _load_json_data(USERS_LOCAL_FILE, {})
+
+def _save_local_users(data: dict):
+    _save_json_data(USERS_LOCAL_FILE, data)
+
+
 @st.cache_resource
 def get_db():
-    """Initialize Firebase app and return Firestore client (cached per session)."""
-    if not firebase_admin._apps:
-        try:
-            if hasattr(st, "secrets") and "FIREBASE_KEY" in st.secrets:
-                key_dict = json.loads(st.secrets["FIREBASE_KEY"])
-                cred = credentials.Certificate(key_dict)
-            else:
-                key_path = os.environ.get("FIREBASE_KEY_PATH", "firebase_key.json")
-                cred = credentials.Certificate(key_path)
-        except Exception:
+    """Initialize Firebase app and return Firestore client if explicitly enabled (defaults to local storage)."""
+    if os.environ.get("ENABLE_FIRESTORE", "false").lower() not in ("true", "1"):
+        return None
+
+    try:
+        if not firebase_admin._apps:
             key_path = os.environ.get("FIREBASE_KEY_PATH", "firebase_key.json")
-            cred = credentials.Certificate(key_path)
-        firebase_admin.initialize_app(cred)
-    return firestore.client()
+            cred = None
+            try:
+                if hasattr(st, "secrets") and "FIREBASE_KEY" in st.secrets:
+                    key_dict = json.loads(st.secrets["FIREBASE_KEY"])
+                    cred = credentials.Certificate(key_dict)
+            except Exception:
+                pass
+            if cred is None and os.path.exists(key_path):
+                try:
+                    cred = credentials.Certificate(key_path)
+                except Exception:
+                    cred = None
+
+            if cred:
+                firebase_admin.initialize_app(cred)
+            else:
+                return None
+        return firestore.client()
+    except Exception as e:
+        print(f"Notice: Firestore initialization deferred ({e}). Operating with local storage.")
+        return None
 
 
 def init_storage():
-    """Ensure study folder exists. Firestore creates collections automatically."""
+    """Ensure study folder exists."""
     STUDY_DIR.mkdir(exist_ok=True)
-    # No table creation needed — Firestore is schema-less
 
 
 def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+    return hashlib.sha256(password.strip().encode()).hexdigest()
 
 
 def record_admin_login(email: str):
-    db = get_db()
-    db.collection("admin_logins").add({
-        "email": email,
-        "login_at": datetime.utcnow().isoformat(),
+    clean_email = (email or "").strip().lower()
+    # 1. Local append
+    logins = _load_json_data(ADMIN_LOGINS_LOCAL_FILE, [])
+    logins.insert(0, {
+        "email": clean_email,
+        "login_at": datetime.utcnow().isoformat()
     })
+    _save_json_data(ADMIN_LOGINS_LOCAL_FILE, logins[:100])
+
+    # 2. Remote Firestore
     try:
-        audit_chain.record_audit_event(email, "ADMIN_LOGIN", {"status": "SUCCESS"})
+        db = get_db()
+        if db:
+            db.collection("admin_logins").add({
+                "email": clean_email,
+                "login_at": datetime.utcnow().isoformat(),
+            })
+    except Exception:
+        pass
+
+    # 3. Cryptographic Audit Chain
+    try:
+        audit_chain.record_audit_event(clean_email, "ADMIN_LOGIN", {"status": "SUCCESS"})
     except Exception:
         pass
 
 
 def load_admin_logins():
-    db = get_db()
-    docs = db.collection("admin_logins").order_by("login_at", direction=firestore.Query.DESCENDING).stream()
-    return [
-        {
-            "Email": d.to_dict().get("email"),
-            "Login Time": d.to_dict().get("login_at")
-        }
-        for d in docs
-    ]
+    # Try Firestore
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("admin_logins").order_by("login_at", direction=firestore.Query.DESCENDING).limit(50).stream()
+            items = [
+                {
+                    "Email": d.to_dict().get("email"),
+                    "Login Time": d.to_dict().get("login_at")
+                }
+                for d in docs
+            ]
+            if items:
+                return items
+    except Exception:
+        pass
+
+    # Fallback to local
+    local_data = _load_json_data(ADMIN_LOGINS_LOCAL_FILE, [])
+    return [{"Email": d.get("email"), "Login Time": d.get("login_at")} for d in local_data]
 
 
 def record_student_query(email: str, room_code: str, question: str):
     """Records student questions for topic analysis and weak area identification."""
-    db = get_db()
+    clean_email = (email or "").strip().lower()
+    rec = {
+        "email": clean_email,
+        "room_code": (room_code or "").strip().upper(),
+        "question": question.strip(),
+        "asked_at": datetime.utcnow().isoformat(),
+    }
+    queries = _load_json_data(STUDENT_QUERIES_LOCAL_FILE, [])
+    queries.append(rec)
+    _save_json_data(STUDENT_QUERIES_LOCAL_FILE, queries[-500:])
+
     try:
-        db.collection("student_queries").add({
-            "email": email,
-            "room_code": room_code,
-            "question": question,
-            "asked_at": datetime.utcnow().isoformat(),
-        })
+        db = get_db()
+        if db:
+            db.collection("student_queries").add(rec)
     except Exception:
         pass
 
@@ -118,17 +197,30 @@ def load_student_analytics(room_code: str = None, user_email: str = None):
     """Aggregates most frequent topics and identifies repeated inquiries (weak areas)."""
     import re
     from collections import Counter
-    db = get_db()
+    clean_code = (room_code or "").strip().upper() if room_code else None
+    clean_user = (user_email or "").strip().lower() if user_email else None
+
+    local_queries = _load_json_data(STUDENT_QUERIES_LOCAL_FILE, [])
     queries = []
+    for q in local_queries:
+        if clean_code and q.get("room_code") != clean_code:
+            continue
+        if clean_user and q.get("email") != clean_user:
+            continue
+        queries.append(q)
+
     try:
-        q = db.collection("student_queries")
-        if room_code:
-            q = q.where("room_code", "==", room_code)
-        if user_email:
-            q = q.where("email", "==", user_email)
-        docs = q.stream()
-        for d in docs:
-            queries.append(d.to_dict())
+        db = get_db()
+        if db:
+            q = db.collection("student_queries")
+            if clean_code:
+                q = q.where("room_code", "==", clean_code)
+            if clean_user:
+                q = q.where("email", "==", clean_user)
+            for d in q.stream():
+                qd = d.to_dict()
+                if qd not in queries:
+                    queries.append(qd)
     except Exception:
         pass
 
@@ -155,313 +247,659 @@ def load_student_analytics(room_code: str = None, user_email: str = None):
         "recent_queries": queries[-10:]
     }
 
-def authenticate_user(email, password):
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin")
-    admin_password = os.environ.get("ADMIN_PASSWORD", "myadminsecret")
-    
-    if email == admin_email and password == admin_password:
-        record_admin_login(admin_email)
+
+def authenticate_user(email: str, password: str):
+    clean_email = (email or "").strip().lower()
+    clean_password = (password or "").strip()
+
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin").strip().lower()
+    admin_password = os.environ.get("ADMIN_PASSWORD", "myadminsecret").strip()
+
+    if clean_email == admin_email and clean_password == admin_password:
+        try:
+            record_admin_login(admin_email)
+        except Exception:
+            pass
         return True, admin_email
 
     for i in range(1, 9):
-        adm_email = os.environ.get(f"ADMIN_EMAIL_{i}")
-        adm_password = os.environ.get(f"ADMIN_PASSWORD_{i}")
-        if adm_email and email == adm_email and password == adm_password:
-            record_admin_login(adm_email)
+        adm_email = (os.environ.get(f"ADMIN_EMAIL_{i}") or "").strip().lower()
+        adm_password = (os.environ.get(f"ADMIN_PASSWORD_{i}") or "").strip()
+        if adm_email and clean_email == adm_email and clean_password == adm_password:
+            try:
+                record_admin_login(adm_email)
+            except Exception:
+                pass
             return True, adm_email
 
-    db = get_db()
-    docs = db.collection("users").where("email", "==", email).limit(1).stream()
-    for doc in docs:
-        data = doc.to_dict()
-        if data.get("password_hash") == hash_password(password):
-            doc.reference.update({"last_login": datetime.utcnow().isoformat()})
-            return True, email
+    # Check local users backup first
+    local_users = _load_local_users()
+    if clean_email in local_users:
+        user_record = local_users[clean_email]
+        if user_record.get("password_hash") == hash_password(clean_password):
+            user_record["last_login"] = datetime.utcnow().isoformat()
+            _save_local_users(local_users)
+            return True, clean_email
+
+    # Check Firestore users if online
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("users").where("email", "==", clean_email).limit(1).stream()
+            for doc in docs:
+                data = doc.to_dict()
+                if data.get("password_hash") == hash_password(clean_password):
+                    try:
+                        doc.reference.update({"last_login": datetime.utcnow().isoformat()})
+                    except Exception:
+                        pass
+                    local_users[clean_email] = data
+                    _save_local_users(local_users)
+                    return True, clean_email
+    except Exception as e:
+        print(f"Firestore authentication lookup notice: {e}")
+
     return False, None
 
 
-def create_user(email, password):
-    db = get_db()
-    # Check if user already exists
-    existing = db.collection("users").where("email", "==", email).limit(1).stream()
-    for _ in existing:
-        return False  # Already exists
-    db.collection("users").add({
-        "email": email,
-        "password_hash": hash_password(password),
+def create_user(email: str, password: str) -> bool:
+    clean_email = (email or "").strip().lower()
+    clean_password = (password or "").strip()
+    if not clean_email or not clean_password:
+        return False
+
+    local_users = _load_local_users()
+    if clean_email in local_users:
+        return False
+
+    new_record = {
+        "email": clean_email,
+        "password_hash": hash_password(clean_password),
         "created_at": datetime.utcnow().isoformat(),
-    })
+        "last_login": datetime.utcnow().isoformat()
+    }
+
+    # Save to Firestore if available
+    try:
+        db = get_db()
+        if db:
+            existing = db.collection("users").where("email", "==", clean_email).limit(1).stream()
+            for _ in existing:
+                return False
+            db.collection("users").add(new_record)
+    except Exception as e:
+        print(f"Firestore create_user notice: {e}")
+
+    # Always persist to local user registry as backup
+    local_users[clean_email] = new_record
+    _save_local_users(local_users)
     return True
 
 
 def load_users():
-    db = get_db()
-    docs = db.collection("users").stream()
+    users_dict = dict(_load_local_users())
+
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("users").stream()
+            for d in docs:
+                u = d.to_dict()
+                em = u.get("email")
+                if em and em not in users_dict:
+                    users_dict[em] = u
+    except Exception:
+        pass
+
     return [
         {
-            "Email": d.to_dict().get("email"),
-            "Sign Up Date": d.to_dict().get("created_at"),
-            "Last Login": d.to_dict().get("last_login", "Never")
+            "Email": u.get("email"),
+            "Sign Up Date": u.get("created_at", "N/A"),
+            "Last Login": u.get("last_login", "Never")
         }
-        for d in docs
+        for u in users_dict.values()
     ]
 
+
 def update_user_profile(email: str, name: str, dob: str, register_number: str):
-    db = get_db()
-    docs = db.collection("users").where("email", "==", email).limit(1).stream()
-    for doc in docs:
-        doc.reference.update({
+    clean_email = (email or "").strip().lower()
+    local_users = _load_local_users()
+    if clean_email in local_users:
+        local_users[clean_email].update({
             "name": name,
             "dob": dob,
             "register_number": register_number
         })
+        _save_local_users(local_users)
+
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("users").where("email", "==", clean_email).limit(1).stream()
+            for doc in docs:
+                doc.reference.update({
+                    "name": name,
+                    "dob": dob,
+                    "register_number": register_number
+                })
+    except Exception:
+        pass
+
 
 def get_user_profile(email: str):
-    db = get_db()
-    docs = db.collection("users").where("email", "==", email).limit(1).stream()
-    for doc in docs:
-        data = doc.to_dict()
+    clean_email = (email or "").strip().lower()
+    local_users = _load_local_users()
+    if clean_email in local_users and local_users[clean_email].get("name"):
+        rec = local_users[clean_email]
         return {
-            "name": data.get("name", ""),
-            "dob": data.get("dob", ""),
-            "register_number": data.get("register_number", "")
+            "name": rec.get("name", ""),
+            "dob": rec.get("dob", ""),
+            "register_number": rec.get("register_number", "")
         }
+
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("users").where("email", "==", clean_email).limit(1).stream()
+            for doc in docs:
+                data = doc.to_dict()
+                return {
+                    "name": data.get("name", ""),
+                    "dob": data.get("dob", ""),
+                    "register_number": data.get("register_number", "")
+                }
+    except Exception:
+        pass
+
+    if clean_email in local_users:
+        rec = local_users[clean_email]
+        return {
+            "name": rec.get("name", ""),
+            "dob": rec.get("dob", ""),
+            "register_number": rec.get("register_number", "")
+        }
+
     return {"name": "", "dob": "", "register_number": ""}
 
+
 def set_user_room(email: str, room_code: str):
-    db = get_db()
-    docs = db.collection("users").where("email", "==", email).limit(1).stream()
-    for doc in docs:
-        doc.reference.update({"current_room": room_code})
+    clean_email = (email or "").strip().lower()
+    clean_code = (room_code or "").strip().upper()
+    local_users = _load_local_users()
+    if clean_email in local_users:
+        local_users[clean_email]["current_room"] = clean_code
+        _save_local_users(local_users)
+
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("users").where("email", "==", clean_email).limit(1).stream()
+            for doc in docs:
+                doc.reference.update({"current_room": clean_code})
+    except Exception:
+        pass
+
 
 def get_room_student_counts(admin_email: str):
-    db = get_db()
     rooms = load_rooms(admin_email)
-    users = db.collection("users").stream()
     room_counts = {r: 0 for r in rooms}
-    for u in users:
-        data = u.to_dict()
-        r = data.get("current_room")
+
+    local_users = _load_local_users()
+    for u in local_users.values():
+        r = u.get("current_room")
         if r in room_counts:
             room_counts[r] += 1
+
+    try:
+        db = get_db()
+        if db:
+            users = db.collection("users").stream()
+            for u in users:
+                data = u.to_dict()
+                r = data.get("current_room")
+                em = data.get("email")
+                if em not in local_users and r in room_counts:
+                    room_counts[r] += 1
+    except Exception:
+        pass
+
     return [{"Room Code": r, "Students Joined": room_counts[r]} for r in rooms]
 
+
 def record_room_visit(email: str, room_code: str):
-    db = get_db()
-    db.collection("room_visits").add({
-        "email": email,
-        "room_code": room_code,
+    clean_email = (email or "").strip().lower()
+    clean_code = (room_code or "").strip().upper()
+    visits = _load_json_data(ROOM_VISITS_LOCAL_FILE, [])
+    visits.append({
+        "email": clean_email,
+        "room_code": clean_code,
         "visited_at": datetime.utcnow().isoformat()
     })
+    _save_json_data(ROOM_VISITS_LOCAL_FILE, visits[-1000:])
+
+    try:
+        db = get_db()
+        if db:
+            db.collection("room_visits").add({
+                "email": clean_email,
+                "room_code": clean_code,
+                "visited_at": datetime.utcnow().isoformat()
+            })
+    except Exception:
+        pass
+
 
 def get_user_joined_rooms(email: str):
-    db = get_db()
-    docs = db.collection("room_visits").where("email", "==", email).stream()
+    clean_email = (email or "").strip().lower()
+    visits = _load_json_data(ROOM_VISITS_LOCAL_FILE, [])
     rooms = set()
-    for d in docs:
-        r = d.to_dict().get("room_code")
-        if r:
-            rooms.add(r)
+    for v in visits:
+        if v.get("email") == clean_email and v.get("room_code"):
+            rooms.add(v.get("room_code"))
+
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("room_visits").where("email", "==", clean_email).stream()
+            for d in docs:
+                r = d.to_dict().get("room_code")
+                if r:
+                    rooms.add(r)
+    except Exception:
+        pass
     return sorted(list(rooms))
+
 
 def get_room_visits_data(admin_email: str, timeframe: str):
     import pandas as pd
-    db = get_db()
     rooms = load_rooms(admin_email)
     if not rooms:
         return pd.DataFrame()
-    
-    docs = db.collection("room_visits").stream()
+
     data = []
-    for d in docs:
-        v = d.to_dict()
+    local_visits = _load_json_data(ROOM_VISITS_LOCAL_FILE, [])
+    for v in local_visits:
         if v.get("room_code") in rooms:
             data.append(v)
-            
+
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("room_visits").stream()
+            for d in docs:
+                v = d.to_dict()
+                if v.get("room_code") in rooms and v not in data:
+                    data.append(v)
+    except Exception:
+        pass
+
     if not data:
         return pd.DataFrame()
-        
+
     df = pd.DataFrame(data)
     df["visited_at"] = pd.to_datetime(df["visited_at"])
-    
+
     if timeframe == "Daily":
         df["period"] = df["visited_at"].dt.strftime("%Y-%m-%d")
     elif timeframe == "Weekly":
         df["period"] = df["visited_at"].dt.strftime("%G-W%V")
-    else: # Monthly
+    else:  # Monthly
         df["period"] = df["visited_at"].dt.strftime("%Y-%m")
-        
+
     grouped = df.groupby(["period", "room_code"]).size().reset_index(name="count")
     pivot_df = grouped.pivot(index="period", columns="room_code", values="count").fillna(0)
     return pivot_df
 
+
 def update_admin_profile(email: str, name: str):
-    db = get_db()
-    docs = db.collection("admins").where("email", "==", email).limit(1).stream()
-    found = False
-    for doc in docs:
-        doc.reference.update({"name": name})
-        found = True
-    if not found:
-        db.collection("admins").add({"email": email, "name": name})
+    clean_email = (email or "").strip().lower()
+    profiles = _load_json_data(ADMIN_PROFILES_LOCAL_FILE, {})
+    profiles[clean_email] = {"name": name}
+    _save_json_data(ADMIN_PROFILES_LOCAL_FILE, profiles)
+
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("admins").where("email", "==", clean_email).limit(1).stream()
+            found = False
+            for doc in docs:
+                doc.reference.update({"name": name})
+                found = True
+            if not found:
+                db.collection("admins").add({"email": clean_email, "name": name})
+    except Exception:
+        pass
+
 
 def get_admin_profile(email: str):
-    db = get_db()
-    docs = db.collection("admins").where("email", "==", email).limit(1).stream()
-    for doc in docs:
-        return doc.to_dict().get("name", "")
+    clean_email = (email or "").strip().lower()
+    profiles = _load_json_data(ADMIN_PROFILES_LOCAL_FILE, {})
+    if clean_email in profiles and profiles[clean_email].get("name"):
+        return profiles[clean_email].get("name")
+
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("admins").where("email", "==", clean_email).limit(1).stream()
+            for doc in docs:
+                return doc.to_dict().get("name", "")
+    except Exception:
+        pass
     return ""
 
 
 def create_room(room_code: str, created_by: str):
-    db = get_db()
-    existing = db.collection("rooms").where("room_code", "==", room_code).limit(1).stream()
-    for _ in existing:
+    clean_code = (room_code or "").strip().upper()
+    clean_by = (created_by or "").strip().lower()
+    if not clean_code:
         return False
-    db.collection("rooms").add({
-        "room_code": room_code,
-        "created_by": created_by,
+
+    rooms_data = _load_json_data(ROOMS_LOCAL_FILE, {})
+    if clean_code in rooms_data:
+        return False
+
+    room_record = {
+        "room_code": clean_code,
+        "created_by": clean_by,
         "created_at": datetime.utcnow().isoformat()
-    })
+    }
+    rooms_data[clean_code] = room_record
+    _save_json_data(ROOMS_LOCAL_FILE, rooms_data)
+
+    room_dir = STUDY_DIR / clean_code
+    room_dir.mkdir(parents=True, exist_ok=True)
+
     try:
-        audit_chain.record_audit_event(created_by, "CREATE_ROOM", {"room_code": room_code})
+        db = get_db()
+        if db:
+            existing = db.collection("rooms").where("room_code", "==", clean_code).limit(1).stream()
+            for _ in existing:
+                pass
+            db.collection("rooms").add(room_record)
+    except Exception:
+        pass
+
+    try:
+        audit_chain.record_audit_event(clean_by, "CREATE_ROOM", {"room_code": clean_code})
     except Exception:
         pass
     return True
 
+
 def delete_room_db(room_code: str):
-    db = get_db()
-    docs = db.collection("rooms").where("room_code", "==", room_code).stream()
-    for d in docs:
-        d.reference.delete()
+    clean_code = (room_code or "").strip().upper()
+    rooms_data = _load_json_data(ROOMS_LOCAL_FILE, {})
+    if clean_code in rooms_data:
+        del rooms_data[clean_code]
+        _save_json_data(ROOMS_LOCAL_FILE, rooms_data)
+
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("rooms").where("room_code", "==", clean_code).stream()
+            for d in docs:
+                d.reference.delete()
+    except Exception:
+        pass
+
     try:
         audit_chain.record_audit_event(
             st.session_state.get("username", "admin"),
             "DELETE_ROOM",
-            {"room_code": room_code}
+            {"room_code": clean_code}
         )
     except Exception:
         pass
 
+
 def load_rooms(admin_email: str = None):
-    db = get_db()
-    query = db.collection("rooms")
-    if admin_email:
-        query = query.where("created_by", "==", admin_email)
-    docs = query.stream()
-    rooms = [d.to_dict() for d in docs]
-    rooms.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-    return [r.get("room_code") for r in rooms if r.get("room_code")]
+    clean_admin = (admin_email or "").strip().lower() if admin_email else None
+    rooms_data = _load_json_data(ROOMS_LOCAL_FILE, {})
+
+    # Auto-discover any directories in STUDY_DIR as existing rooms
+    if STUDY_DIR.exists():
+        for d in STUDY_DIR.iterdir():
+            if d.is_dir() and d.name not in rooms_data:
+                rooms_data[d.name] = {
+                    "room_code": d.name,
+                    "created_by": clean_admin or "admin",
+                    "created_at": datetime.utcnow().isoformat()
+                }
+        _save_json_data(ROOMS_LOCAL_FILE, rooms_data)
+
+    try:
+        db = get_db()
+        if db:
+            query = db.collection("rooms")
+            if clean_admin:
+                query = query.where("created_by", "==", clean_admin)
+            for d in query.stream():
+                rd = d.to_dict()
+                rc = rd.get("room_code")
+                if rc and rc not in rooms_data:
+                    rooms_data[rc] = rd
+    except Exception:
+        pass
+
+    filtered = []
+    for r in rooms_data.values():
+        if clean_admin and r.get("created_by") and r.get("created_by") != clean_admin:
+            continue
+        filtered.append(r)
+
+    filtered.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return [r.get("room_code") for r in filtered if r.get("room_code")]
+
 
 def check_room_exists(room_code: str):
-    db = get_db()
-    docs = db.collection("rooms").where("room_code", "==", room_code).limit(1).stream()
-    for _ in docs:
+    clean_code = (room_code or "").strip().upper()
+    if not clean_code:
+        return False
+    rooms_data = _load_json_data(ROOMS_LOCAL_FILE, {})
+    if clean_code in rooms_data:
         return True
+    if (STUDY_DIR / clean_code).is_dir():
+        return True
+
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("rooms").where("room_code", "==", clean_code).limit(1).stream()
+            for _ in docs:
+                return True
+    except Exception:
+        pass
     return False
 
+
 def get_room_creator(room_code: str) -> str:
-    db = get_db()
-    docs = db.collection("rooms").where("room_code", "==", room_code).limit(1).stream()
-    for doc in docs:
-        creator_email = doc.to_dict().get("created_by", "")
+    clean_code = (room_code or "").strip().upper()
+    rooms_data = _load_json_data(ROOMS_LOCAL_FILE, {})
+    if clean_code in rooms_data:
+        creator_email = rooms_data[clean_code].get("created_by", "")
         if creator_email:
             admin_name = get_admin_profile(creator_email)
-            if admin_name:
-                return f"{admin_name} ({creator_email})"
-            return creator_email
+            return f"{admin_name} ({creator_email})" if admin_name else creator_email
+
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("rooms").where("room_code", "==", clean_code).limit(1).stream()
+            for doc in docs:
+                creator_email = doc.to_dict().get("created_by", "")
+                if creator_email:
+                    admin_name = get_admin_profile(creator_email)
+                    return f"{admin_name} ({creator_email})" if admin_name else creator_email
+    except Exception:
+        pass
     return "Admin"
 
+
 def record_upload(filename: str, original_name: str, size_bytes: int):
-    db = get_db()
-    db.collection("uploads").add({
+    rec = {
         "filename": filename,
         "original_name": original_name,
         "size_bytes": size_bytes,
         "uploaded_at": datetime.utcnow().isoformat(),
-    })
+    }
+    uploads = _load_json_data(UPLOADS_LOCAL_FILE, [])
+    uploads.insert(0, rec)
+    _save_json_data(UPLOADS_LOCAL_FILE, uploads[:200])
+
+    try:
+        db = get_db()
+        if db:
+            db.collection("uploads").add(rec)
+    except Exception:
+        pass
 
 
 def load_uploads():
-    db = get_db()
-    docs = db.collection("uploads").order_by(
-        "uploaded_at", direction=firestore.Query.DESCENDING
-    ).stream()
+    local_uploads = _load_json_data(UPLOADS_LOCAL_FILE, [])
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("uploads").order_by(
+                "uploaded_at", direction=firestore.Query.DESCENDING
+            ).stream()
+            items = [
+                (d.to_dict().get("filename"), d.to_dict().get("original_name"),
+                 d.to_dict().get("size_bytes", 0), d.to_dict().get("uploaded_at"))
+                for d in docs
+            ]
+            if items:
+                return items
+    except Exception:
+        pass
     return [
-        (d.to_dict()["filename"], d.to_dict()["original_name"],
-         d.to_dict()["size_bytes"], d.to_dict()["uploaded_at"])
-        for d in docs
+        (d.get("filename"), d.get("original_name"), d.get("size_bytes", 0), d.get("uploaded_at"))
+        for d in local_uploads
     ]
 
 
 def save_history(username: str, question: str, answer: str):
-    db = get_db()
-    db.collection("history").add({
-        "username": username,
+    import uuid
+    clean_user = (username or "").strip().lower()
+    rec = {
+        "id": str(uuid.uuid4())[:8],
+        "username": clean_user,
         "question": question,
         "answer": answer,
         "pinned": 0,
         "created_at": datetime.utcnow().isoformat(),
-    })
+    }
+    history_list = _load_json_data(HISTORY_LOCAL_FILE, [])
+    history_list.append(rec)
+    _save_json_data(HISTORY_LOCAL_FILE, history_list[-500:])
+
+    try:
+        db = get_db()
+        if db:
+            db.collection("history").add(rec)
+    except Exception:
+        pass
 
 
 def load_history(username: str):
-    db = get_db()
-    docs = db.collection("history").where("username", "==", username).stream()
+    clean_user = (username or "").strip().lower()
+    history_list = _load_json_data(HISTORY_LOCAL_FILE, [])
     rows = []
-    for d in docs:
-        data = d.to_dict()
-        rows.append((d.id, data["question"], data["answer"],
-                     data.get("pinned", 0), data["created_at"]))
-    # Sort: pinned first, then newest
-    rows.sort(key=lambda r: (-r[3], r[4]), reverse=False)
+    for d in history_list:
+        if d.get("username") == clean_user:
+            rows.append((d.get("id"), d.get("question"), d.get("answer"),
+                         d.get("pinned", 0), d.get("created_at")))
+
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("history").where("username", "==", clean_user).stream()
+            for d in docs:
+                data = d.to_dict()
+                row = (d.id, data.get("question"), data.get("answer"),
+                       data.get("pinned", 0), data.get("created_at"))
+                if row not in rows:
+                    rows.append(row)
+    except Exception:
+        pass
+
     rows.sort(key=lambda r: (-r[3], r[4]))
     return rows
 
 
 def clear_history(username: str):
-    db = get_db()
-    docs = db.collection("history").where("username", "==", username).stream()
-    for d in docs:
-        d.reference.delete()
+    clean_user = (username or "").strip().lower()
+    history_list = _load_json_data(HISTORY_LOCAL_FILE, [])
+    history_list = [h for h in history_list if h.get("username") != clean_user]
+    _save_json_data(HISTORY_LOCAL_FILE, history_list)
+
+    try:
+        db = get_db()
+        if db:
+            docs = db.collection("history").where("username", "==", clean_user).stream()
+            for d in docs:
+                d.reference.delete()
+    except Exception:
+        pass
 
 
 def set_pin(history_id: str, pinned: bool):
-    db = get_db()
-    db.collection("history").document(history_id).update(
-        {"pinned": 1 if pinned else 0}
-    )
+    history_list = _load_json_data(HISTORY_LOCAL_FILE, [])
+    for h in history_list:
+        if h.get("id") == history_id:
+            h["pinned"] = 1 if pinned else 0
+    _save_json_data(HISTORY_LOCAL_FILE, history_list)
 
+    try:
+        db = get_db()
+        if db:
+            db.collection("history").document(history_id).update(
+                {"pinned": 1 if pinned else 0}
+            )
+    except Exception:
+        pass
 
 
 def get_cookie_manager():
     if "cookie_manager" not in st.session_state:
-        import extra_streamlit_components as stx
-        st.session_state["cookie_manager"] = stx.CookieManager(key="auth")
-    return st.session_state["cookie_manager"]
+        try:
+            import extra_streamlit_components as stx
+            st.session_state["cookie_manager"] = stx.CookieManager(key="auth")
+        except Exception as e:
+            st.session_state["cookie_manager"] = None
+    return st.session_state.get("cookie_manager")
+
 
 def check_is_admin(user_email):
-    is_adm = (user_email == os.environ.get("ADMIN_EMAIL", "admin"))
-    if not is_adm:
-        for i in range(1, 9):
-            if user_email == os.environ.get(f"ADMIN_EMAIL_{i}"):
-                is_adm = True
-                break
-    return is_adm
+    if not user_email:
+        return False
+    clean_user = str(user_email).strip().lower()
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin").strip().lower()
+    if clean_user == admin_email:
+        return True
+    for i in range(1, 9):
+        adm = (os.environ.get(f"ADMIN_EMAIL_{i}") or "").strip().lower()
+        if adm and clean_user == adm:
+            return True
+    return False
+
 
 def ensure_user_signed_in():
     """Centered login gate — Sign Up default, Sign In & Admin as links below."""
-    cm = get_cookie_manager()
     now = datetime.utcnow()
     
     username = st.session_state.get("username")
     if not username:
-        cookie_username = cm.get("auth_username")
-        if cookie_username:
-            st.session_state["username"] = cookie_username
-            st.session_state["is_admin"] = check_is_admin(cookie_username)
-            st.session_state["signed_in_expires"] = now + timedelta(days=30)
-            st.rerun()
+        try:
+            cm = get_cookie_manager()
+            if cm:
+                cookie_username = cm.get("auth_username")
+                if cookie_username:
+                    st.session_state["username"] = cookie_username
+                    st.session_state["is_admin"] = check_is_admin(cookie_username)
+                    st.session_state["signed_in_expires"] = now + timedelta(days=30)
+                    st.rerun()
+        except Exception:
+            pass
 
     expires = st.session_state.get("signed_in_expires")
     if isinstance(expires, str):
@@ -656,11 +1094,15 @@ def ensure_user_signed_in():
                         st.session_state["username"] = user_email
                         st.session_state["is_admin"] = check_is_admin(user_email)
                         st.session_state["signed_in_expires"] = now + timedelta(days=30)
-                        cm = get_cookie_manager()
-                        if remember_me:
-                            cm.set("auth_username", user_email, expires_at=now + timedelta(days=30))
-                        else:
-                            cm.delete("auth_username")
+                        try:
+                            cm = get_cookie_manager()
+                            if cm:
+                                if remember_me:
+                                    cm.set("auth_username", user_email, expires_at=now + timedelta(days=30))
+                                else:
+                                    cm.delete("auth_username")
+                        except Exception:
+                            pass
                         st.rerun()
                     else:
                         st.error("Invalid credentials.")
@@ -843,8 +1285,12 @@ def admin_panel():
         )
 
     if st.sidebar.button("Log out"):
-        cm = get_cookie_manager()
-        cm.delete("auth_username")
+        try:
+            cm = get_cookie_manager()
+            if cm:
+                cm.delete("auth_username")
+        except Exception:
+            pass
         st.session_state.clear()
         st.rerun()
 
@@ -1211,8 +1657,12 @@ def user_panel():
         )
     
     if st.sidebar.button("Log out"):
-        cm = get_cookie_manager()
-        cm.delete("auth_username")
+        try:
+            cm = get_cookie_manager()
+            if cm:
+                cm.delete("auth_username")
+        except Exception:
+            pass
         st.session_state.clear()
         st.rerun()
         

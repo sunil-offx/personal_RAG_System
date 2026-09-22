@@ -48,9 +48,20 @@ def _get_firestore_db():
 
 def get_audit_chain() -> List[Dict[str, Any]]:
     """Retrieves all audit blocks ordered chronologically by index."""
-    db = _get_firestore_db()
-    if db:
+    # Check local chain first for zero-latency execution
+    if os.path.exists(AUDIT_FALLBACK_FILE):
         try:
+            with open(AUDIT_FALLBACK_FILE, "r", encoding="utf-8") as f:
+                chain = json.load(f)
+                if chain:
+                    return chain
+        except Exception:
+            pass
+
+    # Remote fallback if local is not present
+    try:
+        db = _get_firestore_db()
+        if db:
             docs = (
                 db.collection("audit_chain")
                 .order_by("index", direction=firestore.Query.ASCENDING)
@@ -58,17 +69,11 @@ def get_audit_chain() -> List[Dict[str, Any]]:
             )
             chain = [d.to_dict() for d in docs]
             if chain:
+                _save_audit_chain_local(chain)
                 return chain
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-    # Local fallback file
-    if os.path.exists(AUDIT_FALLBACK_FILE):
-        try:
-            with open(AUDIT_FALLBACK_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
     return []
 
 
