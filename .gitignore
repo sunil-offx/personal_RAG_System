@@ -15,3 +15,4 @@ token.pickle
 .streamlit/secrets.toml
 *.pkl
 *.pdf
+*_local.json

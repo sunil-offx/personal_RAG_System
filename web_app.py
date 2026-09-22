@@ -37,8 +37,15 @@ from rag_study_assistant import (
     ingest,
     retrieve,
     answer_question,
+    answer_question_with_citations,
+    evaluate_groundedness,
+    generate_study_quiz,
+    generate_flashcards,
     Chunk
 )
+import guardrails
+import audit_chain
+import ragas_evaluator
 
 # ── Firebase / Firestore setup ─────────────────────────────────────────────────
 @st.cache_resource
@@ -75,6 +82,11 @@ def record_admin_login(email: str):
         "email": email,
         "login_at": datetime.utcnow().isoformat(),
     })
+    try:
+        audit_chain.record_audit_event(email, "ADMIN_LOGIN", {"status": "SUCCESS"})
+    except Exception:
+        pass
+
 
 def load_admin_logins():
     db = get_db()
@@ -86,6 +98,62 @@ def load_admin_logins():
         }
         for d in docs
     ]
+
+
+def record_student_query(email: str, room_code: str, question: str):
+    """Records student questions for topic analysis and weak area identification."""
+    db = get_db()
+    try:
+        db.collection("student_queries").add({
+            "email": email,
+            "room_code": room_code,
+            "question": question,
+            "asked_at": datetime.utcnow().isoformat(),
+        })
+    except Exception:
+        pass
+
+
+def load_student_analytics(room_code: str = None, user_email: str = None):
+    """Aggregates most frequent topics and identifies repeated inquiries (weak areas)."""
+    import re
+    from collections import Counter
+    db = get_db()
+    queries = []
+    try:
+        q = db.collection("student_queries")
+        if room_code:
+            q = q.where("room_code", "==", room_code)
+        if user_email:
+            q = q.where("email", "==", user_email)
+        docs = q.stream()
+        for d in docs:
+            queries.append(d.to_dict())
+    except Exception:
+        pass
+
+    stopwords = {
+        "what", "is", "how", "the", "a", "an", "explain", "in", "to", "for", "of",
+        "and", "can", "you", "why", "does", "are", "with", "between", "difference",
+        "tell", "about", "me", "from", "that", "this", "which"
+    }
+    words = []
+    question_texts = []
+    for item in queries:
+        text = item.get("question", "").lower()
+        question_texts.append(text)
+        tokens = re.findall(r"\b[a-zA-Z]{3,}\b", text)
+        words.extend([w for w in tokens if w not in stopwords])
+
+    top_topics = Counter(words).most_common(8)
+    repeated = [q for q, count in Counter(question_texts).items() if count > 1]
+
+    return {
+        "total_queries": len(queries),
+        "top_topics": top_topics,
+        "repeated_inquiries": repeated[:5],
+        "recent_queries": queries[-10:]
+    }
 
 def authenticate_user(email, password):
     admin_email = os.environ.get("ADMIN_EMAIL", "admin")
@@ -255,6 +323,10 @@ def create_room(room_code: str, created_by: str):
         "created_by": created_by,
         "created_at": datetime.utcnow().isoformat()
     })
+    try:
+        audit_chain.record_audit_event(created_by, "CREATE_ROOM", {"room_code": room_code})
+    except Exception:
+        pass
     return True
 
 def delete_room_db(room_code: str):
@@ -262,6 +334,14 @@ def delete_room_db(room_code: str):
     docs = db.collection("rooms").where("room_code", "==", room_code).stream()
     for d in docs:
         d.reference.delete()
+    try:
+        audit_chain.record_audit_event(
+            st.session_state.get("username", "admin"),
+            "DELETE_ROOM",
+            {"room_code": room_code}
+        )
+    except Exception:
+        pass
 
 def load_rooms(admin_email: str = None):
     db = get_db()
@@ -709,12 +789,49 @@ def admin_panel():
     admin_email = st.session_state.get("username", "")
     is_super_admin = (admin_email == "orbis.pvt.ltd@gmail.com")
 
+    base_options = [
+        "Manage Rooms",
+        "Retrieval Quality (RAGAS)",
+        "Security Audit Trail",
+        "Student Analytics",
+        "Room Reports",
+        "Admin Profile"
+    ]
+    base_icons = [
+        'house',
+        'graph-up-arrow',
+        'shield-check',
+        'mortarboard',
+        'bar-chart',
+        'person'
+    ]
+
     if is_super_admin:
-        menu_options = ["Manage Rooms", "All Users", "All Uploads", "Admin Login History", "Admin Profile", "Room Reports"]
-        menu_icons = ['house', 'people', 'cloud-upload', 'clock-history', 'person', 'bar-chart']
+        menu_options = [
+            "Manage Rooms",
+            "Retrieval Quality (RAGAS)",
+            "Security Audit Trail",
+            "Student Analytics",
+            "Room Reports",
+            "All Users",
+            "All Uploads",
+            "Admin Login History",
+            "Admin Profile"
+        ]
+        menu_icons = [
+            'house',
+            'graph-up-arrow',
+            'shield-check',
+            'mortarboard',
+            'bar-chart',
+            'people',
+            'cloud-upload',
+            'clock-history',
+            'person'
+        ]
     else:
-        menu_options = ["Manage Rooms", "Admin Profile", "Room Reports"]
-        menu_icons = ['house', 'person', 'bar-chart']
+        menu_options = base_options
+        menu_icons = base_icons
 
     with st.sidebar:
         menu = option_menu(
@@ -733,7 +850,7 @@ def admin_panel():
 
     if menu == "Manage Rooms":
         st.title("Manage Study Rooms")
-        st.write("Create rooms, upload materials, and build AI memory.")
+        st.write("Create rooms, upload materials, scan for security guardrails, and build AI memory.")
         
         # Room Creation
         with st.expander("➕ Create a New Room", expanded=True):
@@ -814,6 +931,7 @@ def admin_panel():
                             success, msg = rebuild_room_index(selected_room)
                         if not success:
                             st.warning(f"File removed. Notice: {msg}")
+                        audit_chain.record_audit_event(admin_email, "REMOVE_FILE", {"room_code": selected_room, "filename": fname})
                         st.rerun()
             
             st.subheader("Upload New Materials")
@@ -825,19 +943,38 @@ def admin_panel():
             )
             
             if st.button("Upload to Room", type="primary") and uploaded_files:
-                with st.spinner("Uploading & generating AI memory in real time..."):
+                with st.spinner("Scanning security guardrails & uploading in real time..."):
+                    uploaded_names = []
+                    security_warnings = []
                     for f in uploaded_files:
-                        supabase_storage_util.upload_room_file(selected_room, f.name, f.getvalue())
+                        file_bytes = f.getvalue()
+                        if f.name.endswith(".txt"):
+                            txt_content = file_bytes.decode("utf-8", errors="ignore")
+                            has_warn, warns = guardrails.scan_document_for_injections(txt_content)
+                            if has_warn:
+                                security_warnings.extend([f"[{f.name}] {w}" for w in warns])
+                        supabase_storage_util.upload_room_file(selected_room, f.name, file_bytes)
+                        record_upload(f.name, f.name, len(file_bytes))
+                        uploaded_names.append(f.name)
+
+                    if security_warnings:
+                        st.warning("⚠️ Security Guardrail Notice: Suspicious prompt injection patterns detected:\n" + "\n".join(security_warnings[:3]))
+
+                    audit_chain.record_audit_event(
+                        admin_email,
+                        "UPLOAD_MATERIALS",
+                        {"room_code": selected_room, "files": uploaded_names}
+                    )
                     success, msg = rebuild_room_index(selected_room)
                         
                 if success:
                     st.success("Uploaded & indexed in real time!")
                 else:
                     st.warning(f"Uploaded files, but indexing notice: {msg}")
-                # Wait 1.5 seconds before rerun so the user sees the message
                 import time
                 time.sleep(1.5)
                 st.rerun()
+
             st.markdown("---")
             st.subheader("Build AI Memory")
             st.write("After adding or removing files, click below to update the AI's memory for this room.")
@@ -845,6 +982,7 @@ def admin_panel():
                 with st.spinner("Analyzing... this may take a minute."):
                     success, msg = rebuild_room_index(selected_room)
                 if success:
+                    audit_chain.record_audit_event(admin_email, "REBUILD_INDEX", {"room_code": selected_room})
                     st.success("Index rebuilt successfully in real-time .pkl and Supabase pgvector!")
                 else:
                     st.warning(f"⚠️ {msg}")
@@ -858,11 +996,152 @@ def admin_panel():
                     try:
                         client = supabase_storage_util.get_supabase()
                         client.table("documents").delete().eq("room_code", selected_room).execute()
-                    except Exception as e:
+                    except Exception:
                         pass
                     delete_room_db(selected_room)
                 st.success(f"Room '{selected_room}' deleted successfully!")
                 st.rerun()
+
+    elif menu == "Retrieval Quality (RAGAS)":
+        st.title("🎯 Retrieval Quality Dashboard (RAGAS)")
+        st.write(
+            "Monitors retrieval and generation quality per room against golden Q&A benchmarks. "
+            "Evaluates Faithfulness, Answer Relevance, Context Precision, and Context Recall."
+        )
+        rooms = load_rooms(admin_email=st.session_state["username"])
+        if not rooms:
+            st.info("No study rooms available to evaluate. Please create a room and ingest materials first.")
+            return
+
+        col1, col2 = st.columns([2, 2])
+        with col1:
+            eval_room = st.selectbox("Select Study Room", rooms, key="ragas_eval_room")
+        with col2:
+            eval_mode = st.radio("Retrieval Mode to Benchmark", ["hybrid", "dense"], horizontal=True)
+
+        if st.button("🚀 Run RAGAS Quality Evaluation", type="primary"):
+            with st.spinner(f"Evaluating room '{eval_room}' using {eval_mode} retrieval..."):
+                try:
+                    summary = ragas_evaluator.run_evaluation(eval_room, mode=eval_mode)
+                    audit_chain.record_audit_event(
+                        admin_email,
+                        "RUN_RAGAS_EVALUATION",
+                        {"room_code": eval_room, "mode": eval_mode, "score": summary["overall_score"]}
+                    )
+                    st.success(f"Evaluation finished! Overall RAGAS Score: {summary['overall_score'] * 100:.1f}%")
+                except Exception as e:
+                    st.error(f"Evaluation encountered an issue: {e}")
+
+        st.markdown("---")
+        st.subheader("Latest Quality Metrics")
+        history = ragas_evaluator.load_eval_history(room_code=eval_room)
+        if history:
+            latest = history[0]
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Faithfulness (Groundedness)", f"{latest.get('faithfulness', 0) * 100:.1f}%")
+            m2.metric("Answer Relevance", f"{latest.get('answer_relevance', 0) * 100:.1f}%")
+            m3.metric("Context Precision", f"{latest.get('context_precision', 0) * 100:.1f}%")
+            m4.metric("Context Recall", f"{latest.get('context_recall', 0) * 100:.1f}%")
+
+            st.write(f"**Overall RAG Quality Index:** `{latest.get('overall_score', 0) * 100:.1f}%` (Evaluated on {latest.get('timestamp', '')[:16]})")
+
+            with st.expander("🔍 Inspect Detailed Q&A Evaluation Results"):
+                for idx, item in enumerate(latest.get("details", []), start=1):
+                    st.markdown(f"**Q{idx}: {item.get('question')}**")
+                    st.caption(f"Faithfulness: {item.get('faithfulness', 0)*100:.0f}% | Relevance: {item.get('answer_relevance', 0)*100:.0f}% | Precision: {item.get('context_precision', 0)*100:.0f}% | Recall: {item.get('context_recall', 0)*100:.0f}%")
+                    st.write(item.get("answer"))
+                    st.markdown("---")
+
+            st.subheader("Evaluation History")
+            hist_rows = []
+            for h in history:
+                hist_rows.append({
+                    "Timestamp": h.get("timestamp", "")[:16],
+                    "Mode": h.get("mode", "hybrid"),
+                    "Faithfulness": f"{h.get('faithfulness', 0)*100:.1f}%",
+                    "Relevance": f"{h.get('answer_relevance', 0)*100:.1f}%",
+                    "Precision": f"{h.get('context_precision', 0)*100:.1f}%",
+                    "Recall": f"{h.get('context_recall', 0)*100:.1f}%",
+                    "Overall": f"{h.get('overall_score', 0)*100:.1f}%"
+                })
+            st.table(hist_rows)
+        else:
+            st.info("No evaluation runs recorded yet for this room. Click 'Run RAGAS Quality Evaluation' above.")
+
+    elif menu == "Security Audit Trail":
+        st.title("🛡️ Tamper-Evident Security Audit Trail")
+        st.write(
+            "Every administrative action is stored in an immutable SHA-256 cryptographic hash chain. "
+            "Any modification or tampering with previous events breaks the chain link and is detected instantly."
+        )
+
+        col_v1, col_v2 = st.columns([2, 1])
+        with col_v1:
+            if st.button("🔐 Verify Cryptographic Chain Integrity", type="primary"):
+                ver = audit_chain.verify_chain_integrity()
+                if ver["is_valid"]:
+                    st.success(ver["message"])
+                else:
+                    st.error(ver["message"])
+        with col_v2:
+            st.caption("Algorithm: SHA-256 Chained Hash Blocks")
+
+        chain = audit_chain.get_audit_chain()
+        if chain:
+            st.markdown("---")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Chain Blocks", len(chain))
+            c2.metric("Genesis Linked", "Yes (64-byte zeros)")
+            c3.metric("Latest Block #", chain[-1].get("index", 0))
+
+            st.subheader("Chronological Audit Trail")
+            table_data = []
+            for b in reversed(chain):
+                table_data.append({
+                    "Block #": b.get("index"),
+                    "Timestamp (UTC)": b.get("timestamp", "")[:19],
+                    "Admin / Actor": b.get("admin"),
+                    "Action": b.get("action"),
+                    "Details": str(b.get("details", ""))[:45],
+                    "SHA-256 Hash": b.get("hash", "")[:16] + "..."
+                })
+            st.table(table_data)
+        else:
+            st.info("No audit events logged yet. Genesis block will be minted on the next admin action.")
+
+    elif menu == "Student Analytics":
+        st.title("📊 Student Learning Analytics")
+        st.write(
+            "Analyzes student questions to uncover frequently queried concepts, conceptual sticking points, "
+            "and inferred weak areas based on repeated or rephrased queries."
+        )
+        rooms = load_rooms(admin_email=st.session_state["username"])
+        selected_ana_room = st.selectbox("Filter by Room", ["All Rooms"] + rooms)
+        room_filter = None if selected_ana_room == "All Rooms" else selected_ana_room
+
+        analytics = load_student_analytics(room_code=room_filter)
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Student Questions", analytics["total_queries"])
+        col2.metric("Frequent Core Topics", len(analytics["top_topics"]))
+        col3.metric("Detected Weak Areas", len(analytics["repeated_inquiries"]))
+
+        st.markdown("---")
+        st.subheader("🔥 Top Asked Topics & Key Terms")
+        if analytics["top_topics"]:
+            import pandas as pd
+            df_topics = pd.DataFrame(analytics["top_topics"], columns=["Topic / Keyword", "Frequency"])
+            st.bar_chart(df_topics.set_index("Topic / Keyword"))
+        else:
+            st.write("No student queries recorded yet for this selection.")
+
+        st.subheader("⚠️ Inferred Weak Areas (Repeated Questions)")
+        if analytics["repeated_inquiries"]:
+            st.write("Students have repeatedly asked about these topics, indicating concepts that need more emphasis:")
+            for req in analytics["repeated_inquiries"]:
+                st.warning(f"📌 '{req}'")
+        else:
+            st.info("No repeated weak-point questions detected yet.")
 
     elif menu == "All Users":
         st.title("User Management")
@@ -879,7 +1158,6 @@ def admin_panel():
             st.table([{"Filename": u[0], "Size (Bytes)": u[2], "Date": u[3]} for u in uploads])
         else:
             st.write("No uploads found.")
-
 
     elif menu == "Admin Login History":
         st.title("Admin Login History")
@@ -1009,48 +1287,232 @@ def user_panel():
         else:
             st.sidebar.markdown("---")
             st.sidebar.write(f"**Current Room:** {current_room}")
+            retrieval_mode = st.sidebar.selectbox(
+                "Retrieval Engine",
+                ["Hybrid (BM25 + Dense + RRF)", "Dense (Semantic Vector)"],
+                index=0,
+                help="Toggle live between hybrid sparse-dense fusion or pure dense vector search."
+            )
+            compare_mode = st.sidebar.toggle(
+                "Multi-Doc Compare Mode",
+                value=False,
+                help="Compare and contrast answers across different textbook sources."
+            )
             if st.sidebar.button("Leave Room"):
                 st.session_state["current_room"] = None
                 st.session_state["messages"] = []
                 set_user_room(st.session_state["username"], "")
                 st.rerun()
-                
-            st.subheader(f"Room: {current_room} - Chat")
-            
-            if "messages" not in st.session_state:
-                st.session_state.messages = []
-                
-            import urllib.parse
-            for i, message in enumerate(st.session_state.messages):
-                with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
-                    
-            if prompt := st.chat_input("Ask a question about this room's materials..."):
-                st.session_state.messages.append({"role": "user", "content": prompt})
-                with st.chat_message("user"):
-                    st.markdown(prompt)
 
-                with st.chat_message("assistant"):
-                    with st.spinner("Thinking..."):
-                        answer = ""
+            st.subheader(f"Room: {current_room}")
+
+            tab_chat, tab_practice, tab_my_analytics = st.tabs(
+                ["💬 Interactive Study Chat", "📝 Practice & Quizzes", "📊 My Learning Analytics"]
+            )
+
+            with tab_chat:
+                if "messages" not in st.session_state:
+                    st.session_state.messages = []
+
+                for i, message in enumerate(st.session_state.messages):
+                    with st.chat_message(message["role"]):
+                        if message["role"] == "assistant" and message.get("groundedness"):
+                            g = message["groundedness"]
+                            score = g.get("score", 85)
+                            color = "#10B981" if score >= 75 else ("#F59E0B" if score >= 50 else "#EF4444")
+                            bg_color = "rgba(16, 185, 129, 0.15)" if score >= 75 else ("rgba(245, 158, 11, 0.15)" if score >= 50 else "rgba(239, 68, 68, 0.15)")
+                            badge_html = f"""
+                            <div style="display: inline-block; background: {bg_color}; border: 1px solid {color}; border-radius: 6px; padding: 2px 8px; margin-bottom: 8px; font-size: 0.8rem; font-weight: 600; color: {color};">
+                                Groundedness: {g.get('label')}
+                            </div>
+                            """
+                            st.markdown(badge_html, unsafe_allow_html=True)
+
+                        st.markdown(message["content"])
+
+                        if message["role"] == "assistant" and message.get("sources"):
+                            sources = message["sources"]
+                            with st.expander(f"📚 Sources & Evidence Used ({len(sources)} citations)"):
+                                for s in sources:
+                                    p_str = f", Page {s['page']}" if s.get("page") else ""
+                                    st.markdown(f"**[{s['index']}] {s['source']}{p_str}**")
+                                    st.caption(f"\"{s['snippet']}\"")
+
+                if prompt := st.chat_input("Ask a question about this room's materials..."):
+                    user_email = st.session_state["username"]
+
+                    # 1. Rate Limiting Check
+                    allowed, retry_after = guardrails.global_rate_limiter.is_allowed(user_email)
+                    if not allowed:
+                        st.error(f"⏳ Rate limit reached. Please wait {retry_after} seconds before asking your next question.")
+                        st.stop()
+
+                    # 2. Prompt Injection Guardrail Check
+                    is_injected, reason = guardrails.check_prompt_injection(prompt)
+                    if is_injected:
+                        st.error(f"🚨 Security Guardrail Alert: {reason}. Request blocked for safety.")
                         try:
-                            import tempfile
-                            from pathlib import Path
-                            from rag_study_assistant import retrieve, answer_question
-                            import supabase_storage_util
-                            
-                            chunks = []
+                            audit_chain.record_audit_event(
+                                "SYSTEM_GUARDRAIL",
+                                "PROMPT_INJECTION_BLOCKED",
+                                {"user": user_email, "room": current_room, "reason": reason}
+                            )
+                        except Exception:
+                            pass
+                        st.stop()
+
+                    st.session_state.messages.append({"role": "user", "content": prompt})
+                    with st.chat_message("user"):
+                        st.markdown(prompt)
+
+                    with st.chat_message("assistant"):
+                        with st.spinner("Retrieving notes & preparing explanation..."):
                             try:
-                                chunks = retrieve(prompt, k=5, room_code=current_room)
+                                mode_arg = "hybrid" if "Hybrid" in retrieval_mode else "dense"
+                                chunks = []
+                                try:
+                                    chunks = retrieve(prompt, k=5, room_code=current_room, mode=mode_arg)
+                                except Exception as e:
+                                    print(f"Retrieval error: {e}")
+
+                                res = answer_question_with_citations(
+                                    prompt, chunks, comparison_mode=compare_mode
+                                )
+                                answer = res["answer"]
+                                sources = res.get("sources", [])
+                                groundedness = res.get("groundedness", {})
+
+                                # Render Groundedness Badge
+                                score = groundedness.get("score", 85)
+                                color = "#10B981" if score >= 75 else ("#F59E0B" if score >= 50 else "#EF4444")
+                                bg_color = "rgba(16, 185, 129, 0.15)" if score >= 75 else ("rgba(245, 158, 11, 0.15)" if score >= 50 else "rgba(239, 68, 68, 0.15)")
+                                badge_html = f"""
+                                <div style="display: inline-block; background: {bg_color}; border: 1px solid {color}; border-radius: 6px; padding: 2px 8px; margin-bottom: 8px; font-size: 0.8rem; font-weight: 600; color: {color};">
+                                    Groundedness: {groundedness.get('label')}
+                                </div>
+                                """
+                                st.markdown(badge_html, unsafe_allow_html=True)
+                                st.markdown(answer)
+
+                                if sources:
+                                    with st.expander(f"📚 Sources & Evidence Used ({len(sources)} citations)"):
+                                        for s in sources:
+                                            p_str = f", Page {s['page']}" if s.get("page") else ""
+                                            st.markdown(f"**[{s['index']}] {s['source']}{p_str}**")
+                                            st.caption(f"\"{s['snippet']}\"")
+
+                                save_history(user_email, prompt, answer)
+                                record_student_query(user_email, current_room, prompt)
+
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": answer,
+                                    "sources": sources,
+                                    "groundedness": groundedness
+                                })
                             except Exception as e:
-                                print(f"Retrieval error: {e}")
-                            answer = answer_question(prompt, chunks)
-                            st.markdown(answer)
-                            save_history(st.session_state["username"], prompt, answer)
-                        except Exception as e:
-                            st.error(f"Error: {e}")
-                if answer:
-                    st.session_state.messages.append({"role": "assistant", "content": answer})
+                                st.error(f"Error: {e}")
+
+            with tab_practice:
+                st.subheader("Interactive Recall & Knowledge Testing")
+                st.write("Reinforce your memory with auto-generated flashcards and interactive quizzes.")
+
+                sub_flash, sub_quiz = st.tabs(["🗂️ Spaced-Repetition Flashcards", "🎯 Practice Quiz"])
+
+                with sub_flash:
+                    if st.button("✨ Generate Flashcards from Ingested Notes", key=f"btn_flash_{current_room}"):
+                        with st.spinner("Synthesizing key definitions and concepts..."):
+                            cards = generate_flashcards(current_room, count=6)
+                            st.session_state[f"flashcards_{current_room}"] = cards
+
+                    cards = st.session_state.get(f"flashcards_{current_room}", [])
+                    if cards:
+                        st.write(f"Generated {len(cards)} study flashcards:")
+                        cols = st.columns(2)
+                        for idx, card in enumerate(cards):
+                            with cols[idx % 2]:
+                                with st.container():
+                                    st.markdown(f"**Card #{idx+1}: {card.get('front')}**")
+                                    with st.expander("👁️ Reveal Answer & Explanation"):
+                                        st.info(card.get("back"))
+                                        st.caption(f"Source: {card.get('source', 'Room notes')}")
+                                    st.markdown("---")
+                    else:
+                        st.info("Click the button above to generate study flashcards from your uploaded materials.")
+
+                with sub_quiz:
+                    if st.button("🚀 Generate 5-Question Multiple Choice Quiz", key=f"btn_quiz_{current_room}"):
+                        with st.spinner("Formulating multiple-choice questions from notes..."):
+                            questions = generate_study_quiz(current_room, count=5)
+                            st.session_state[f"quiz_{current_room}"] = questions
+                            st.session_state[f"quiz_submitted_{current_room}"] = False
+
+                    questions = st.session_state.get(f"quiz_{current_room}", [])
+                    if questions:
+                        st.write(f"**Practice Quiz ({len(questions)} Questions):**")
+                        user_answers = {}
+                        for idx, q in enumerate(questions):
+                            st.markdown(f"**Question {idx+1}: {q.get('question')}**")
+                            opts = q.get("options", [])
+                            ans = st.radio(
+                                f"Select an option for Q{idx+1}:",
+                                opts,
+                                key=f"q_{current_room}_{idx}",
+                                index=None
+                            )
+                            user_answers[idx] = ans
+                            st.write("")
+
+                        if st.button("📝 Submit Quiz Answers", type="primary"):
+                            score = 0
+                            st.session_state[f"quiz_submitted_{current_room}"] = True
+                            st.markdown("---")
+                            st.subheader("Quiz Results & Explanations")
+                            for idx, q in enumerate(questions):
+                                correct_idx = q.get("correct_index", 0)
+                                correct_opt = q.get("options", [""])[correct_idx] if correct_idx < len(q.get("options", [])) else ""
+                                selected = user_answers.get(idx)
+
+                                if selected == correct_opt:
+                                    score += 1
+                                    st.success(f"✅ **Q{idx+1} Correct!** You selected: {selected}")
+                                else:
+                                    st.error(f"❌ **Q{idx+1} Incorrect.** You selected: {selected or 'No answer'}. Correct answer: **{correct_opt}**")
+                                st.caption(f"💡 Explanation: {q.get('explanation')}")
+
+                            pct = (score / len(questions)) * 100
+                            st.metric("Your Final Score", f"{score} / {len(questions)} ({pct:.0f}%)")
+                            if pct >= 80:
+                                st.balloons()
+                    else:
+                        st.info("Click 'Generate 5-Question Multiple Choice Quiz' above to test your understanding.")
+
+            with tab_my_analytics:
+                st.subheader("My Study Progress in this Room")
+                my_analytics = load_student_analytics(
+                    room_code=current_room,
+                    user_email=st.session_state["username"]
+                )
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("My Total Questions", my_analytics["total_queries"])
+                c2.metric("Topics Queried", len(my_analytics["top_topics"]))
+                c3.metric("Review Points", len(my_analytics["repeated_inquiries"]))
+
+                st.markdown("---")
+                st.subheader("📚 My Most Frequent Topics")
+                if my_analytics["top_topics"]:
+                    import pandas as pd
+                    df_topics = pd.DataFrame(my_analytics["top_topics"], columns=["Concept", "Count"])
+                    st.bar_chart(df_topics.set_index("Concept"))
+                else:
+                    st.info("You haven't asked questions in this room yet. Ask questions in the Study Chat to see your personalized learning profile!")
+
+                if my_analytics["repeated_inquiries"]:
+                    st.subheader("⚠️ Concepts You Asked About Multiple Times")
+                    st.write("Consider reviewing these topics or generating flashcards to strengthen mastery:")
+                    for q_text in my_analytics["repeated_inquiries"]:
+                        st.warning(f"📌 '{q_text}'")
 
 if __name__ == "__main__":
     main()

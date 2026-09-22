@@ -114,6 +114,46 @@ The chat mode launches an interactive question-answering session grounded in you
 - Prompt the Groq model to answer using only that retrieved context
 - Indicate explicitly when a question cannot be answered from the provided materials
 
+## Advanced Capabilities & High-Impact Features
+
+### 1. Hybrid Retrieval & Reciprocal Rank Fusion (RRF)
+- **Sparse BM25 + Dense pgvector Fusion**: Combines keyword matching with semantic vector search.
+- **Reciprocal Rank Fusion (RRF)**: Merges sparse and dense candidate ranks using $RRF(d) = \sum \frac{1}{60 + \text{rank}}$.
+- **Live Engine Toggle**: Switch between **Hybrid Mode** and **Dense Mode** live in the study room to demonstrate retrieval precision differences.
+
+### 2. Source-Grounded Citations & Evidence Drawer
+- **Inline Citations**: Responses include bracketed citations (`[1]`, `[2]`) directly linked to retrieved document excerpts.
+- **Collapsible Sources Panel**: Expandable drawer beneath each answer showing the exact file name, page number, and source snippet.
+
+### 3. Real-Time Groundedness & Confidence Scoring
+- **Automated Faithfulness Check**: Evaluates semantic alignment between answer claims and retrieved excerpts.
+- **Visual Confidence Badges**: Displays `Grounded ✅ (92%)`, `Partially Grounded ⚠️ (65%)`, or `Possibly Ungrounded 🚨`.
+
+### 4. RAGAS Quality Evaluation Dashboard (Admin Panel)
+- **Self-Monitoring RAG System**: Built-in evaluation framework computing:
+  - **Faithfulness**: Are claims supported by retrieved context?
+  - **Answer Relevance**: Does the answer address the question?
+  - **Context Precision**: Are the most relevant chunks ranked at the top?
+  - **Context Recall**: Did retrieval capture all necessary facts from the golden reference?
+- **Golden Benchmark Q&A**: Evaluates rooms periodically or on-demand, storing historical quality trends.
+
+### 5. Multi-Document Comparison Mode
+- When study rooms contain multiple textbooks or lecture notes, this toggle instructs the LLM to structure answers comparing and contrasting the perspectives of distinct source documents.
+
+### 6. Auto-Generated Flashcards & Interactive Quizzes
+- **Spaced-Repetition Flashcards**: Generates key concept cards with flip/reveal answers and cited sources.
+- **Interactive Practice Quizzes**: Generates 5-question multiple choice tests with instant scoring, feedback, and concept explanations.
+
+### 7. Student Learning Analytics
+- Analyzes student questions to uncover frequently queried topics and identifies **weak areas** inferred from repeated or rephrased queries.
+
+### 8. Cybersecurity & Cryptographic Architecture
+- **Prompt Injection Guardrails**: Sanitizes user queries and scans uploaded study materials for indirect prompt injection and jailbreak payloads (`ignore previous instructions`, `system prompt override`, delimiters).
+- **Rate Limiting**: Sliding-window limiter preventing abuse.
+- **Tamper-Evident SHA-256 Hash Chain**: Every admin action (logins, room creation/deletion, uploads, index rebuilds) is cryptographically linked:
+  $$\text{Hash}_i = \text{SHA256}(\text{Index} + \text{Timestamp} + \text{Admin} + \text{Action} + \text{Details} + \text{Hash}_{i-1})$$
+  Includes a one-click **"Verify Cryptographic Chain Integrity"** button in the Admin Panel that detects illicit modifications.
+
 ## Why RAG Instead of Just Asking the Model Directly?
 
 - **Grounded answers**: responses are based on the specific materials you provide, not generic or potentially outdated knowledge.

@@ -54,6 +54,11 @@ async def process_admin_webhook(payload: WebhookPayload, username: str = Securit
     Send a POST request with HTTP Basic Auth (email and password).
     """
     action = payload.action
+    try:
+        import audit_chain
+        audit_chain.record_audit_event(username, f"WEBHOOK_{action.upper()}", payload.model_dump())
+    except Exception:
+        pass
     
     # Example logic based on action type
     if action == "rebuild_index":
